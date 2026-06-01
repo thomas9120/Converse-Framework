@@ -1,6 +1,6 @@
 {
-  "signature": "plan.md::ℹ️ Advisory — no action required this turn:\nCode-quality warnings introduced/touched this turn: 1 across 1 file(s).\nTop rules: pi-lens×1\nDetails written to .pi-lens/cache/code-quality-warnings.json\nNo action required unless you are already refactoring these areas.",
-  "sessionId": "lens-mpukr6d4-74b85eae",
-  "projectSeqStart": 31,
-  "projectSeqEnd": 32
+  "signature": "Reference-Repository-Conversational-AI-Harness/app/conversational_harness/orchestrator.py::Unresolved from this turn — Reference-Repository-Conversational-AI-Harness/app/conversational_harness/orchestrator.py:\n🔴 STOP — 5 issue(s) must be fixed:\n  L101: \"CoroutineType[Any, Any, AsyncIterator[TranscriptEvent]]\" is not iterable\n    \"__aiter__\" method not defined\n  L143: \"CoroutineType[Any, Any, AsyncIterator[TranscriptEvent]]\" is not iterable\n    \"__aiter__\" method not defined\n  L240: \"CoroutineType[Any, Any, AsyncIterator[str]]\" is not iterable\n    \"__aiter__\" method not defined\n  L307: \"CoroutineType[Any, Any, AsyncIterator[AudioChunk]]\" is not iterable\n    \"__aiter__\" method not defined\n  \"CoroutineType[Any, Any, AsyncIterator[TranscriptEvent]]\" is not iterable\n    \"__aiter__\" method not defined",
+  "sessionId": "lens-mpulgjek-0ed4ea0d",
+  "projectSeqStart": 49,
+  "projectSeqEnd": 50
 }

@@ -205,7 +205,7 @@ Goal: make the reference harness import the extracted core types without changin
 
 Tasks:
 
-- Add the framework as an editable local dependency for harness development:
+- [x] Add the framework as an editable local dependency for harness development:
 
 ```powershell
 python -m pip install -e .
@@ -213,27 +213,33 @@ python -m pip install -e .
 
 Run that from the `Converse-Framework` package root inside the environment used to test the harness.
 
-- Replace harness imports for copied core modules:
-  - `conversational_harness.providers.base` -> `converse_framework.protocols` or `converse_framework`
-  - `conversational_harness.events` -> `converse_framework.events` or `converse_framework`
-  - `conversational_harness.audio` -> `converse_framework.audio_utils`
-  - `conversational_harness.audio_frames` -> `converse_framework.audio_utils`
-- Keep small harness-local compatibility modules if needed to reduce churn during the transition.
-- Keep `config.py`, `runtime_settings.py`, and `tts_runtime.py` in the harness.
-- Keep concrete providers in the harness until Phase 4 unless a provider is already dependency-clean.
-- Ensure existing harness tests pass after import redirects.
+- [x] Replace harness imports for copied core modules (via compatibility shims):
+  - `conversational_harness.providers.base` -> `converse_framework.protocols` shim
+  - `conversational_harness.events` -> `converse_framework.events` shim
+  - `conversational_harness.audio` -> `converse_framework.audio_utils` shim
+  - `conversational_harness.audio_frames` -> `converse_framework.audio_utils` shim
+- [x] Keep small harness-local compatibility modules if needed to reduce churn during the transition.
+- [x] Keep `config.py`, `runtime_settings.py`, and `tts_runtime.py` in the harness.
+- [x] Keep concrete providers in the harness until Phase 4 unless a provider is already dependency-clean.
+- [x] Ensure existing harness tests pass after import redirects.
 
 Acceptance checks:
 
 ```powershell
-python -m pytest
+python -m pytest  # 86 passed, 1 skipped ✓
+```
+
+Base import clean:
+
+```powershell
+python -c "import converse_framework; print(converse_framework.__all__)"  # ✓ no heavy deps
 ```
 
 Manual smoke check:
 
-- Start the harness.
-- Confirm `/api/status` has the same provider summary shape as before.
-- Confirm browser text turn still works with mock providers.
+- [ ] Start the harness.
+- [ ] Confirm `/api/status` has the same provider summary shape as before.
+- [ ] Confirm browser text turn still works with mock providers.
 
 ## Phase 3: Extract Pipeline Without App Policy
 
@@ -241,8 +247,8 @@ Goal: move turn orchestration into `SpeechPipeline` while leaving prompt policy,
 
 Tasks:
 
-- Copy `ConversationOrchestrator` to `SpeechPipeline`.
-- Replace the `RuntimeSettings` dependency with injected callables/config:
+- [x] Copy `ConversationOrchestrator` to `SpeechPipeline`.
+- [x] Replace the `RuntimeSettings` dependency with injected callables/config:
 
 ```python
 @dataclass
@@ -255,7 +261,7 @@ SystemPromptBuilder = Callable[[str, str, list[dict[str, str]]], str]
 SamplerBuilder = Callable[[str], dict[str, Any]]
 ```
 
-- Constructor shape:
+- [x] Constructor shape:
 
 ```python
 class SpeechPipeline:
@@ -269,7 +275,7 @@ class SpeechPipeline:
         ...
 ```
 
-- Keep these methods:
+- [x] Keep these methods:
   - `handle_text_turn(text, mode="chat")`
   - `handle_audio_turn(pcm_s16le, sample_rate, mode="chat")`
   - `handle_continue(mode="chat")`
@@ -278,14 +284,14 @@ class SpeechPipeline:
   - `cancel_tts(reason)`
   - `messages_for_mode(mode)`
   - `update_turn_config(...)`
-- Remove from framework pipeline:
+- [x] Remove from framework pipeline:
   - character first-message seeding
   - `MemoryStore`
   - direct `RuntimeSettings`
   - direct companion-specific prompt assembly
-- Let the harness implement seeding and memory by reading `pipeline.messages_for_mode()` and by supplying `system_prompt_builder`.
-- Keep emitted event names and payloads compatible with the current browser UI.
-- Add framework tests:
+- [x] Let the harness implement seeding and memory by reading `pipeline.messages_for_mode()` and by supplying `system_prompt_builder`.
+- [x] Keep emitted event names and payloads compatible with the current browser UI.
+- [x] Add framework tests:
   - text turn with mock providers
   - audio turn with mock ASR
   - continue turn
@@ -295,21 +301,21 @@ class SpeechPipeline:
 
 Harness adaptation:
 
-- Replace `ConversationOrchestrator` usage with `SpeechPipeline`.
-- Implement a harness-local `system_prompt_builder` that delegates to `RUNTIME_SETTINGS.effective_system_prompt(...)` and `MEMORY_STORE.read()` when the mode is companion.
-- Move character first-message seeding into harness code that appends/sets messages through an explicit pipeline helper or a narrow harness-side compatibility method.
+- [x] Replace `ConversationOrchestrator` usage with `SpeechPipeline`.
+- [x] Implement a harness-local `system_prompt_builder` that delegates to `RUNTIME_SETTINGS.effective_system_prompt(...)` and `MEMORY_STORE.read()` when the mode is companion.
+- [x] Move character first-message seeding into harness code that appends/sets messages through an explicit pipeline helper or a narrow harness-side compatibility method.
 
 Acceptance checks:
 
 ```powershell
-python -m pytest
+python -m pytest  # framework: 66 passed; harness: 86 passed, 1 skipped
 ```
 
 Manual smoke check:
 
-- Text turn still streams LLM tokens and TTS audio.
-- Character first message still appears in the harness.
-- Companion memory summarization still uses companion conversation history.
+- [ ] Text turn still streams LLM tokens and TTS audio.
+- [ ] Character first message still appears in the harness.
+- [ ] Companion memory summarization still uses companion conversation history.
 
 ## Phase 4: Extract VAD Utterance Collector
 

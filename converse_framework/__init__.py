@@ -16,6 +16,10 @@ from converse_framework.events import (
     FrameworkEvent,
     QueueEventSink,
 )
+from converse_framework.pipeline import (
+    PipelineConfig,
+    SpeechPipeline,
+)
 from converse_framework.protocols import (
     ASRProvider,
     AudioChunk,
@@ -54,8 +58,10 @@ __all__ = [
     "ProviderBundle",
     "ProviderCapabilities",
     "ProviderStatus",
+    "PipelineConfig",
     "QueueEventSink",
     "QueueTransport",
+    "SpeechPipeline",
     "TTSProvider",
     "TranscriptEvent",
     "Transport",

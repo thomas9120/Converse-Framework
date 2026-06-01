@@ -1,38 +1,15 @@
 {
-  "generatedAt": "2026-06-01T02:28:00.836Z",
+  "generatedAt": "2026-06-01T02:47:48.461Z",
   "scope": "turn_delta",
-  "sessionId": "lens-mpukr6d4-74b85eae",
-  "turnIndex": 42,
-  "projectSeqStart": 31,
-  "projectSeqEnd": 32,
+  "sessionId": "lens-mpulgjek-0ed4ea0d",
+  "turnIndex": 38,
+  "projectSeqStart": 52,
+  "projectSeqEnd": 52,
   "deltaOnly": true,
-  "files": [
-    {
-      "filePath": "C:\\Users\\pegas\\Desktop\\LLama\\Test apps\\backup\\Converse-Framework\\plan.md",
-      "displayPath": "plan.md",
-      "fileSeq": 1,
-      "warnings": [
-        {
-          "id": "cq:2b8ebf6dfc",
-          "filePath": "C:\\Users\\pegas\\Desktop\\LLama\\Test apps\\backup\\Converse-Framework\\plan.md",
-          "displayPath": "plan.md",
-          "severity": "warning",
-          "tool": "pi-lens",
-          "message": "Pi-lens analysis unavailable. Tools for markdown not installed.",
-          "category": "other",
-          "origin": "dispatch"
-        }
-      ]
-    }
-  ],
+  "files": [],
   "summary": {
-    "warnings": 1,
-    "files": 1,
-    "topRules": [
-      {
-        "rule": "pi-lens",
-        "count": 1
-      }
-    ]
+    "warnings": 0,
+    "files": 0,
+    "topRules": []
   }
 }
