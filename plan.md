@@ -444,15 +444,15 @@ Goal: make concrete providers reusable while preserving base-package lightness.
 
 Tasks:
 
-- Move provider implementations into `converse_framework.providers`.
-- Convert imports to framework modules only:
+- [x] Move provider implementations into `converse_framework.providers`.
+- [x] Convert imports to framework modules only:
   - `converse_framework.protocols`
   - `converse_framework.audio_utils`
   - `converse_framework.registry`
-- Remove app path dependencies:
+- [x] Remove app path dependencies:
   - `KokoroOnnxProvider` must not import `PROJECT_ROOT`; default cache path should come from config or a platform cache directory.
   - `LlamaCppProvider` must not import or accept `RuntimeSettings`; sampler values come from config at construction or from an injected sampler callable if added to the LLM protocol.
-- Register providers lazily:
+- [x] Register providers lazily:
 
 ```python
 register_provider("vad", "silero", "converse_framework.providers.silero:SileroVADProvider")
@@ -462,22 +462,39 @@ register_provider("tts", "kokoro-onnx", "converse_framework.providers.kokoro_onn
 register_provider("tts", "pocket-tts", "converse_framework.providers.pocket_tts:PocketTTSProvider")
 ```
 
-- Ensure each missing dependency error says which extra to install:
+- [x] Ensure each missing dependency error says which extra to install:
   - `pip install converse-framework[silero]`
   - `pip install converse-framework[faster-whisper]`
   - `pip install converse-framework[llamacpp]`
   - `pip install converse-framework[kokoro]`
   - `pip install converse-framework[pocket-tts]`
-- Keep harness-specific provider aliases or profile-name mapping in the harness if needed.
-- Update harness factory code to use framework registry and `ProviderBundle`.
+- [x] Keep harness-specific provider aliases or profile-name mapping in the harness if needed.
+- [x] Update harness factory code to use framework registry and `ProviderBundle`.
 
 Tests:
 
-- base import with no provider extras installed
-- each provider module imports when its dependencies are available
-- missing dependency produces friendly unavailable status or clear exception
-- `build_provider_bundle` builds mock-only bundle without heavy imports
-- provider status serialization remains compatible with `/api/status`
+- [x] base import with no provider extras installed
+- [x] each provider module imports when its dependencies are available
+- [x] missing dependency produces friendly unavailable status or clear exception
+- [x] `build_provider_bundle` builds mock-only bundle without heavy imports
+- [x] provider status serialization remains compatible with `/api/status`
+
+Harness adaptation:
+
+- [x] Harness provider modules (`silero`, `faster_whisper`, `llamacpp`, `kokoro_onnx`, `pocket_tts`, `mock`, `unavailable`) are now thin shims that re-export from `converse_framework.providers`.
+- [x] Harness `providers/factory.py` delegates `build_provider_bundle` to the framework registry while keeping the existing `ProviderBundle` import path and the `serialize_status` / `serialize_statuses` JSON shape.
+- [x] Harness `main.py` wires the llama.cpp LLM through the new `set_sampler_provider` callable (passing `RUNTIME_SETTINGS.effective_sampler`) instead of `set_runtime_settings`.
+
+Acceptance checks:
+
+```powershell
+python -m pytest  # framework: 116 passed (91 existing + 25 new); harness: 86 passed, 1 skipped
+python -c "import converse_framework; print(converse_framework.__all__)"  # clean base import, 34 exports (added extra_hint_for)
+```
+
+Manual smoke check (still requires a real provider extra installed):
+
+- [ ] Start the harness with a `silero` / `faster-whisper` / `kokoro-onnx` / `pocket-tts` profile and confirm the friendly `pip install converse-framework[<extra>]` hint appears when the extra is missing.
 
 ## Phase 6: Transport and Second Consumer
 

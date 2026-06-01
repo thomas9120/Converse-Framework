@@ -31,6 +31,7 @@ from converse_framework.protocols import (
     VADEvent,
     VADProvider,
 )
+from converse_framework.providers.unavailable import extra_hint_for
 from converse_framework.registry import (
     ProviderBundle,
     build_provider,
@@ -76,6 +77,7 @@ __all__ = [
     "build_provider",
     "build_provider_bundle",
     "compute_pcm16_level",
+    "extra_hint_for",
     "float_audio_to_pcm_s16le_bytes",
     "float_audio_to_wav_bytes",
     "is_provider_available",

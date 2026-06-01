@@ -2,6 +2,11 @@
 
 Provider implementations are registered by import string and only loaded
 on first use so that ``import converse_framework`` stays lightweight.
+
+Each provider kind (``vad``/``asr``/``llm``/``tts``) supports a small set of
+known names. The base install always provides the ``mock`` providers. Other
+providers are registered with availability probes so the registry can
+report friendlier error messages when an optional dependency is missing.
 """
 
 from __future__ import annotations
@@ -44,6 +49,9 @@ def register_provider(
     """Register a provider implementation by import string.
 
     The module is not imported until :func:`build_provider` is called.
+    A custom ``availability_probe`` (returning True if the provider is
+    ready to use) lets the registry give specific feedback about which
+    optional dependency is missing.
     """
     if kind not in _registry:
         raise ValueError(
@@ -53,7 +61,12 @@ def register_provider(
 
 
 def is_provider_available(kind: str, name: str) -> bool:
-    """Return True if the named provider can be loaded."""
+    """Return True if the named provider can be loaded.
+
+    A registered provider is considered available when either:
+      * its ``availability_probe`` returns True, or
+      * its module imports without raising :class:`ImportError`.
+    """
     entry = _registry.get(kind, {}).get(name)
     if entry is None:
         return False
@@ -67,34 +80,47 @@ def is_provider_available(kind: str, name: str) -> bool:
         return False
 
 
+def _probe_module(module_path: str) -> Callable[[], bool]:
+    def probe() -> bool:
+        try:
+            importlib.import_module(module_path)
+            return True
+        except ImportError:
+            return False
+
+    return probe
+
+
 def build_provider(
     kind: str, name: str, config: dict[str, Any] | None = None
 ) -> VADProvider | ASRProvider | LLMProvider | TTSProvider:
     """Instantiate a provider by kind and name.
 
-    Uses :func:`is_provider_available` to decide whether to attempt
-    loading or return an unavailable sentinel.
+    The framework's own provider modules import cleanly even when their
+    heavy third-party dependencies are missing (those imports are deferred
+    into provider methods). So the build path only requires the
+    ``converse_framework.providers.<x>`` module to be importable, not the
+    heavy backend library. :func:`is_provider_available` adds the stricter
+    "is the heavy dep present" check for callers that want a definitive
+    availability signal; missing deps are also reported by the resulting
+    provider's status message.
     """
     if config is None:
         config = {}
 
-    if not is_provider_available(kind, name):
-        # Return an unavailable provider for this kind/name
+    entry = _registry.get(kind, {}).get(name)
+    if entry is None:
         from converse_framework.providers.unavailable import UnavailableProvider
 
-        return UnavailableProvider(
-            kind=kind,
-            name=name,
-            message=(
-                f"Provider '{name}' ({kind}) is not available. "
-                f"Ensure the required extra is installed "
-                f"(e.g. pip install converse-framework[{name}])."
-            ),
-        )
+        return UnavailableProvider(kind=kind, name=name)
 
-    entry = _registry[kind][name]
     module_path, class_name = entry.import_path.rsplit(":", 1)
-    module = importlib.import_module(module_path)
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError:
+        from converse_framework.providers.unavailable import UnavailableProvider
+
+        return UnavailableProvider(kind=kind, name=name)
     cls = getattr(module, class_name)
     return cls(config)
 
@@ -186,30 +212,56 @@ def _serialize_statuses(items) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# Bootstrap: register the built-in mock and unavailable providers eagerly
-# so they are always available without extras.
+# Built-in provider registrations
 # ---------------------------------------------------------------------------
+#
+# Mock and unavailable providers are always available. Concrete providers
+# (silero, faster-whisper, llamacpp, kokoro-onnx, pocket-tts) live in their
+# own modules so their heavy third-party imports only happen when the user
+# actually selects them. The probes below check module importability without
+# forcing eager imports.
 
 register_provider("vad", "mock", "converse_framework.providers.mock:MockVADProvider")
 register_provider("asr", "mock", "converse_framework.providers.mock:MockASRProvider")
 register_provider("llm", "mock", "converse_framework.providers.mock:MockLLMProvider")
 register_provider("tts", "mock", "converse_framework.providers.mock:MockTTSProvider")
 
-# Concrete providers registered lazily (modules not yet present in Phase 1)
 register_provider(
-    "vad", "silero", "converse_framework.providers.silero:SileroVADProvider"
+    "vad",
+    "silero",
+    "converse_framework.providers.silero:SileroVADProvider",
+    availability_probe=_probe_module("silero_vad"),
 )
 register_provider(
     "asr",
     "faster-whisper",
     "converse_framework.providers.faster_whisper:FasterWhisperASRProvider",
+    availability_probe=_probe_module("faster_whisper"),
 )
 register_provider(
-    "llm", "llamacpp", "converse_framework.providers.llamacpp:LlamaCppProvider"
+    "llm",
+    "llamacpp",
+    "converse_framework.providers.llamacpp:LlamaCppProvider",
+    availability_probe=_probe_module("httpx"),
+)
+# ``kokoro`` is the name used in profiles; the implementation lives in
+# ``kokoro_onnx.py`` because that's the model family. ``kokoro-onnx`` is
+# kept as a legacy alias for harness compatibility.
+register_provider(
+    "tts",
+    "kokoro",
+    "converse_framework.providers.kokoro_onnx:KokoroOnnxProvider",
+    availability_probe=_probe_module("kokoro_onnx"),
 )
 register_provider(
-    "tts", "kokoro", "converse_framework.providers.kokoro_onnx:KokoroOnnxProvider"
+    "tts",
+    "kokoro-onnx",
+    "converse_framework.providers.kokoro_onnx:KokoroOnnxProvider",
+    availability_probe=_probe_module("kokoro_onnx"),
 )
 register_provider(
-    "tts", "pocket-tts", "converse_framework.providers.pocket_tts:PocketTTSProvider"
+    "tts",
+    "pocket-tts",
+    "converse_framework.providers.pocket_tts:PocketTTSProvider",
+    availability_probe=_probe_module("pocket_tts"),
 )

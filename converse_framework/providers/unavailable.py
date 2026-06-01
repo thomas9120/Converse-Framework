@@ -16,10 +16,42 @@ from converse_framework.protocols import (
 )
 
 
+# Map of provider name -> ``pip install`` extra hint. Used to construct a
+# helpful message when a provider's underlying dependency is missing.
+EXTRA_HINTS: dict[tuple[str, str], str] = {
+    ("vad", "silero"): "converse-framework[silero]",
+    ("asr", "faster-whisper"): "converse-framework[faster-whisper]",
+    ("llm", "llamacpp"): "converse-framework[llamacpp]",
+    ("tts", "kokoro"): "converse-framework[kokoro]",
+    ("tts", "kokoro-onnx"): "converse-framework[kokoro]",
+    ("tts", "pocket-tts"): "converse-framework[pocket-tts]",
+}
+
+
+def extra_hint_for(kind: str, name: str) -> str | None:
+    """Return the ``pip install`` extra hint for a missing provider, if known."""
+    return EXTRA_HINTS.get((kind, name))
+
+
 class UnavailableProvider(VADProvider, ASRProvider, LLMProvider, TTSProvider):
     """Sentinel provider that reports not-ready and raises on use."""
 
-    def __init__(self, kind: str, name: str, message: str, requires_gpu: bool = False):
+    def __init__(
+        self,
+        kind: str,
+        name: str,
+        message: str | None = None,
+        requires_gpu: bool = False,
+    ):
+        if message is None:
+            extra = extra_hint_for(kind, name)
+            message = (
+                f"Provider '{name}' ({kind}) is not available. "
+                f"Install the required extra with "
+                f"`pip install {extra}`."
+                if extra
+                else f"Provider '{name}' ({kind}) is not available."
+            )
         self._status = ProviderStatus(
             name=name,
             kind=kind,
