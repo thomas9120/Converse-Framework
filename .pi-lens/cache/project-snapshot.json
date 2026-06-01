@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "projectRoot": "C:/Users/pegas/Desktop/LLama/Test apps/backup/Converse-Framework",
+  "generatedAt": "2026-06-01T02:30:26.234Z",
+  "seq": 42,
+  "files": {},
+  "symbols": {},
+  "reverseDeps": {},
+  "cachedExports": [],
+  "projectRulesScan": {
+    "rules": [],
+    "hasCustomRules": false
+  },
+  "startupScan": {
+    "cwd": "C:\\Users\\pegas\\Desktop\\LLama\\Test apps\\backup\\Converse-Framework",
+    "scanRoot": "C:\\Users\\pegas\\Desktop\\LLama\\Test apps\\backup\\Converse-Framework",
+    "projectRoot": "C:\\Users\\pegas\\Desktop\\LLama\\Test apps\\backup\\Converse-Framework",
+    "canWarmCaches": true,
+    "sourceFileCount": 49
+  },
+  "languageProfile": {
+    "present": {
+      "jsts": true,
+      "python": true,
+      "go": false,
+      "rust": false,
+      "cxx": false,
+      "cmake": false,
+      "fish": false,
+      "shell": false,
+      "json": false,
+      "markdown": false,
+      "css": false,
+      "yaml": true,
+      "sql": true,
+      "ruby": false,
+      "html": false,
+      "docker": false,
+      "php": false,
+      "powershell": false,
+      "prisma": false,
+      "csharp": false,
+      "fsharp": false,
+      "java": false,
+      "kotlin": false,
+      "swift": false,
+      "dart": false,
+      "lua": false,
+      "zig": false,
+      "haskell": false,
+      "elixir": false,
+      "gleam": false,
+      "ocaml": false,
+      "clojure": false,
+      "terraform": false,
+      "nix": false,
+      "toml": true
+    },
+    "configured": {
+      "python": true,
+      "yaml": true,
+      "sql": true,
+      "toml": true
+    },
+    "counts": {
+      "python": 48,
+      "jsts": 1
+    },
+    "detectedKinds": [
+      "jsts",
+      "python",
+      "yaml",
+      "sql",
+      "toml"
+    ]
+  }
+}

@@ -1,0 +1,107 @@
+{
+  "files": {
+    "pyproject.toml": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 34
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-06-01T02:28:21.211Z"
+    },
+    "converse_framework/protocols.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 124
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-06-01T02:28:21.218Z"
+    },
+    "converse_framework/audio_utils.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 231
+        }
+      ],
+      "importsChanged": true,
+      "lastEdit": "2026-06-01T02:28:21.226Z"
+    },
+    "converse_framework/transport.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 32
+        }
+      ],
+      "importsChanged": true,
+      "lastEdit": "2026-06-01T02:28:21.234Z"
+    },
+    "converse_framework/registry.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 216
+        }
+      ],
+      "importsChanged": true,
+      "lastEdit": "2026-06-01T02:28:21.242Z"
+    },
+    "converse_framework/providers/mock.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 172
+        }
+      ],
+      "importsChanged": true,
+      "lastEdit": "2026-06-01T02:28:21.247Z"
+    },
+    "converse_framework/providers/unavailable.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 74
+        }
+      ],
+      "importsChanged": false,
+      "lastEdit": "2026-06-01T02:28:21.252Z"
+    },
+    "tests/test_events.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 76
+        }
+      ],
+      "importsChanged": true,
+      "lastEdit": "2026-06-01T02:28:21.261Z"
+    },
+    "tests/test_audio_utils.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 273
+        }
+      ],
+      "importsChanged": true,
+      "lastEdit": "2026-06-01T02:28:21.268Z"
+    },
+    "tests/test_transport.py": {
+      "modifiedRanges": [
+        {
+          "start": 1,
+          "end": 59
+        }
+      ],
+      "importsChanged": true,
+      "lastEdit": "2026-06-01T02:28:21.273Z"
+    }
+  },
+  "turnCycles": 0,
+  "maxCycles": 3,
+  "lastUpdated": "2026-06-01T02:28:21.273Z"
+}

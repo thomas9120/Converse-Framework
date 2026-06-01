@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "converse-framework"
+version = "0.1.0"
+description = "Provider-agnostic speech stack for speech-to-speech applications"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = ["numpy>=2.0"]
+
+[project.optional-dependencies]
+silero = ["silero-vad>=6.0", "onnxruntime>=1.20"]
+faster-whisper = [
+  "faster-whisper>=1.2",
+  "nvidia-cublas-cu12; platform_system == 'Windows'",
+]
+llamacpp = ["httpx>=0.28"]
+kokoro = ["kokoro-onnx>=0.5", "misaki>=0.7"]
+pocket-tts = ["pocket-tts>=2.1"]
+all-vad = ["converse-framework[silero]"]
+all-asr = ["converse-framework[faster-whisper]"]
+all-llm = ["converse-framework[llamacpp]"]
+all-tts = ["converse-framework[kokoro,pocket-tts]"]
+all = ["converse-framework[all-vad,all-asr,all-llm,all-tts]"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["converse_framework"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
