@@ -323,7 +323,7 @@ Goal: remove the nonlocal VAD state machine from the WebSocket receiver and make
 
 Tasks:
 
-- Create `UtteranceCollectorConfig`:
+- [x] Create `UtteranceCollectorConfig`:
 
 ```python
 @dataclass
@@ -341,13 +341,13 @@ class UtteranceCollectorConfig:
     trim_silence_frame_ms: int = 30
 ```
 
-- Compute derived values inside the config or collector:
+- [x] Compute derived values inside the config or collector:
   - `pre_speech_frames = pre_speech_ms // frame_ms`
   - `max_utterance_frames = max_utterance_ms // frame_ms`
   - `bytes_per_ms = sample_rate * channels * 2 // 1000`
   - `expected_frame_bytes = bytes_per_ms * frame_ms`
-- Preserve current behavior but fix duration math to include channels.
-- Create `AudioUtteranceCollector`:
+- [x] Preserve current behavior but fix duration math to include channels.
+- [x] Create `AudioUtteranceCollector`:
 
 ```python
 class AudioUtteranceCollector:
@@ -358,11 +358,17 @@ class AudioUtteranceCollector:
         utterance_callback: Callable[[bytes, int, str], Awaitable[None]],
         config: UtteranceCollectorConfig | None = None,
         cancel_callback: Callable[[str], Awaitable[None]] | None = None,
-        mode_getter: Callable[[AudioFrame], str] | None = None,
+        pre_speech_start_hook: Callable[[AudioFrame, str], Awaitable[None]] | None = None,
     ) -> None:
         ...
 
-    async def ingest_frame(self, frame: AudioFrame, *, mode: str = "chat") -> None:
+    async def ingest_frame(
+        self,
+        frame: AudioFrame,
+        *,
+        mode: str = "chat",
+        pre_speech_start_hook: Callable[[AudioFrame, str], Awaitable[None]] | None = None,
+    ) -> None:
         ...
 
     async def cancel_active_turn(self, reason: str) -> None:
@@ -377,20 +383,19 @@ class AudioUtteranceCollector:
         ...
 ```
 
-- Move the following state into instance attributes:
+- [x] Move the following state into instance attributes:
   - pre-buffer
   - utterance buffer
   - recording flag
   - recording mode
   - audio stats
-- Keep this rejection order:
+- [x] Keep this rejection order:
   - minimum duration
   - short low-energy utterance
   - whole-utterance RMS floor
   - silence edge trimming
-- Emit compatible event types:
+- [x] Emit compatible event types from the collector:
   - `audio.input_level`
-  - `audio.frame_error`
   - `vad.error`
   - `vad.probability`
   - `vad.speech_start`
@@ -398,36 +403,40 @@ class AudioUtteranceCollector:
   - `vad.speech_rejected`
   - `asr.audio_trimmed`
   - `asr.buffer_warning`
-- Keep WebSocket JSON parsing in the harness. The framework collector accepts `AudioFrame`, not raw WebSocket payloads.
-- Refactor the harness receiver to:
+  - Note: `audio.frame_error` is emitted by the harness receiver (not the collector) because WebSocket payload parsing stays in the harness.
+  - Note: `vad.speech_start` and `vad.speech_end` no longer carry a `source` field; the harness emits its own `vad.speech_start` with `source="browser"` from the browser-sent message.
+- [x] Keep WebSocket JSON parsing in the harness. The framework collector accepts `AudioFrame`, not raw WebSocket payloads.
+- [x] Refactor the harness receiver to:
   - parse message
   - call `parse_audio_frame(...)`
-  - pass frames into `AudioUtteranceCollector`
+  - pass frames into `AudioUtteranceCollector` (with a per-frame `pre_speech_start_hook` that reads `system_prompt` from the WebSocket payload and calls `orchestrator.set_system_prompt(...)`)
   - route text/continue/control messages to `SpeechPipeline`
 
-Framework tests:
+Framework tests (`tests/test_utterance_collector.py`):
 
-- speech start drains pre-buffer
-- speech end dispatches utterance bytes
-- minimum-duration rejection
-- low-energy rejection
-- utterance RMS rejection
-- silence trimming event
-- max utterance closes current utterance
-- VAD probability forwarding
-- barge-in cancellation callback fires on speech start
+- [x] speech start drains pre-buffer
+- [x] speech end dispatches utterance bytes
+- [x] minimum-duration rejection
+- [x] low-energy rejection
+- [x] utterance RMS rejection
+- [x] silence trimming event
+- [x] max utterance closes current utterance
+- [x] VAD probability forwarding
+- [x] barge-in cancellation callback fires on speech start
+- [x] additional coverage: config derived values (mono/stereo), `pre_speech_start_hook` ordering vs cancel callback, per-frame hook override, VAD `ValueError` -> `vad.error`, `is_recording` / `current_mode` state, independent `AudioFrameStats` per collector, callback `sample_rate` propagation, zero-threshold pass-through.
 
 Acceptance checks:
 
 ```powershell
-python -m pytest
+python -m pytest  # framework: 91 passed (66 existing + 25 new); harness: 86 passed, 1 skipped ✓
+python -c "import converse_framework; print(converse_framework.__all__)"  # ✓ no heavy deps, 33 exports
 ```
 
 Manual smoke check:
 
-- Browser mic flow still transcribes speech.
-- Brief noise/keystrokes are still rejected.
-- Barge-in still cancels active TTS.
+- [ ] Browser mic flow still transcribes speech.
+- [ ] Brief noise/keystrokes are still rejected.
+- [ ] Barge-in still cancels active TTS.
 
 ## Phase 5: Move Concrete Providers Behind Extras
 

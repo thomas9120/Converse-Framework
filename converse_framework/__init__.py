@@ -42,6 +42,10 @@ from converse_framework.transport import (
     QueueTransport,
     Transport,
 )
+from converse_framework.utterance_collector import (
+    AudioUtteranceCollector,
+    UtteranceCollectorConfig,
+)
 
 # Compatibility alias for harness consumers
 HarnessEvent = FrameworkEvent
@@ -51,6 +55,7 @@ __all__ = [
     "AudioChunk",
     "AudioFrame",
     "AudioFrameStats",
+    "AudioUtteranceCollector",
     "EventSink",
     "FrameworkEvent",
     "HarnessEvent",
@@ -65,6 +70,7 @@ __all__ = [
     "TTSProvider",
     "TranscriptEvent",
     "Transport",
+    "UtteranceCollectorConfig",
     "VADEvent",
     "VADProvider",
     "build_provider",
