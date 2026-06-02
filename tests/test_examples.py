@@ -197,6 +197,98 @@ def test_format_event_for_cli_dispatches_per_event_type():
 
 
 # ---------------------------------------------------------------------------
+# WebSocket voice-chat recipe
+# ---------------------------------------------------------------------------
+
+
+def test_websocket_voice_runtime_uses_transport_sink():
+    from converse_framework.events import FrameworkEvent
+    from converse_framework.examples.websocket_voice_chat import (
+        build_websocket_voice_runtime,
+    )
+
+    class FakeTransport:
+        def __init__(self):
+            self.events = []
+
+        async def send_event(self, event):
+            self.events.append(event)
+
+    transport = FakeTransport()
+    runtime = build_websocket_voice_runtime(transport)
+    assert runtime.pipeline.sink.transport is transport
+    assert runtime.collector.serialize_config()["sample_rate"] == 16000
+    assert isinstance(FrameworkEvent("x"), FrameworkEvent)
+
+
+def test_websocket_voice_handler_emits_audio_frame_error():
+    from converse_framework.examples.websocket_voice_chat import (
+        build_websocket_voice_runtime,
+        handle_websocket_message,
+    )
+
+    class FakeTransport:
+        def __init__(self):
+            self.events = []
+
+        async def send_event(self, event):
+            self.events.append(event)
+
+    async def run():
+        transport = FakeTransport()
+        runtime = build_websocket_voice_runtime(transport)
+        await handle_websocket_message(
+            runtime,
+            transport,
+            {
+                "type": "audio.frame",
+                "payload": {
+                    "encoding": "pcm_s16le",
+                    "sample_rate": 123,
+                    "channels": 1,
+                    "frame_ms": 30,
+                    "sequence": 0,
+                    "data": "AAAA",
+                },
+            },
+        )
+        return transport.events
+
+    events = asyncio.run(run())
+    assert len(events) == 1
+    assert events[0].type == "audio.frame_error"
+    assert "sample_rate" in events[0].payload["message"]
+
+
+def test_websocket_transport_sends_and_receives_json():
+    from converse_framework.events import FrameworkEvent
+    from converse_framework.examples.websocket_voice_chat import WebSocketTransport
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.sent = []
+
+        async def send_json(self, payload):
+            self.sent.append(payload)
+
+        async def receive_json(self):
+            return {"type": "client.event", "payload": {"x": 1}, "ts": 1.5}
+
+    async def run():
+        websocket = FakeWebSocket()
+        transport = WebSocketTransport(websocket)
+        await transport.send_event(FrameworkEvent("server.event", {"ok": True}))
+        received = await transport.receive_event()
+        return websocket.sent, received
+
+    sent, received = asyncio.run(run())
+    assert sent[0]["type"] == "server.event"
+    assert sent[0]["payload"] == {"ok": True}
+    assert received.type == "client.event"
+    assert received.payload == {"x": 1}
+
+
+# ---------------------------------------------------------------------------
 # Subprocess-based ASR provider recipe
 # ---------------------------------------------------------------------------
 

@@ -16,16 +16,21 @@ from converse_framework.protocols import (
 )
 
 
-# Map of provider name -> ``pip install`` extra hint. Used to construct a
-# helpful message when a provider's underlying dependency is missing.
+# Map of provider name -> optional-dependency extra. Used to construct a
+# helpful install hint when a provider's underlying dependency is missing.
+EXTRAS: dict[tuple[str, str], str] = {
+    ("vad", "silero"): "silero",
+    ("asr", "faster-whisper"): "faster-whisper",
+    ("asr", "whisper-cpp"): "whisper-cpp",
+    ("llm", "llamacpp"): "llamacpp",
+    ("tts", "kokoro"): "kokoro",
+    ("tts", "kokoro-onnx"): "kokoro",
+    ("tts", "pocket-tts"): "pocket-tts",
+}
+
+# Backward-compatible table exported for callers that already use it.
 EXTRA_HINTS: dict[tuple[str, str], str] = {
-    ("vad", "silero"): "converse-framework[silero]",
-    ("asr", "faster-whisper"): "converse-framework[faster-whisper]",
-    ("asr", "whisper-cpp"): "converse-framework[whisper-cpp]",
-    ("llm", "llamacpp"): "converse-framework[llamacpp]",
-    ("tts", "kokoro"): "converse-framework[kokoro]",
-    ("tts", "kokoro-onnx"): "converse-framework[kokoro]",
-    ("tts", "pocket-tts"): "converse-framework[pocket-tts]",
+    key: f"converse-framework[{extra}]" for key, extra in EXTRAS.items()
 }
 
 
@@ -51,6 +56,11 @@ def extra_hint_for(kind: str, name: str) -> str | None:
     return EXTRA_HINTS.get((kind, name))
 
 
+def missing_extra_for(kind: str, name: str) -> str | None:
+    """Return the optional-dependency extra for a missing provider, if known."""
+    return EXTRAS.get((kind, name))
+
+
 class UnavailableProvider(VADProvider, ASRProvider, LLMProvider, TTSProvider):
     """Sentinel provider that reports not-ready and raises on use."""
 
@@ -70,12 +80,15 @@ class UnavailableProvider(VADProvider, ASRProvider, LLMProvider, TTSProvider):
                 if extra
                 else f"Provider '{name}' ({kind}) is not available."
             )
+        install_hint = extra_hint_for(kind, name)
         self._status = ProviderStatus(
             name=name,
             kind=kind,
             ready=False,
             message=message,
             capabilities=ProviderCapabilities(requires_gpu=requires_gpu),
+            install_hint=install_hint,
+            missing_extra=missing_extra_for(kind, name),
             provider_id=name,
             loaded=False,
         )

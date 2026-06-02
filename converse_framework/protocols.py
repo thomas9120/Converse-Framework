@@ -52,6 +52,11 @@ class ProviderStatus:
             ``"llm"``, ``"tts"``.
         ready: True if the provider can be used right now.
         message: Human-readable status, surfaced verbatim in the UI.
+        install_hint: Optional package spec to install when this
+            provider is unavailable because an optional dependency is
+            missing, e.g. ``"converse-framework[silero]"``.
+        missing_extra: Optional extra name for UI display when the
+            framework knows which optional dependency group is missing.
         capabilities: Static feature flags for this provider.
         provider_id: Stable identifier for UI selection when the
             registered ``name`` is aliased.
@@ -70,6 +75,8 @@ class ProviderStatus:
     ready: bool
     message: str
     capabilities: ProviderCapabilities
+    install_hint: str | None = None
+    missing_extra: str | None = None
     provider_id: str | None = None
     selected: bool = False
     loaded: bool = True

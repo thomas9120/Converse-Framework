@@ -247,6 +247,8 @@ def _serialize_status(item: ProviderStatus) -> dict[str, Any]:
         "kind": item.kind,
         "ready": item.ready,
         "message": item.message,
+        "install_hint": item.install_hint,
+        "missing_extra": item.missing_extra,
         "capabilities": item.capabilities.__dict__,
         "provider_id": item.provider_id,
         "selected": item.selected,

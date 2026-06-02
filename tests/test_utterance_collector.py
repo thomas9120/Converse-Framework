@@ -209,6 +209,14 @@ def test_config_rejects_non_positive_sample_rate():
         UtteranceCollectorConfig(sample_rate=0)
 
 
+def test_config_to_dict_excludes_derived_values():
+    config = UtteranceCollectorConfig(min_speech_duration_ms=123)
+    serialized = config.to_dict()
+    assert serialized["min_speech_duration_ms"] == 123
+    assert "expected_frame_bytes" not in serialized
+    assert "pre_speech_frames" not in serialized
+
+
 # ---------------------------------------------------------------------------
 # Frame ingestion
 # ---------------------------------------------------------------------------
@@ -724,6 +732,40 @@ def test_collector_uses_config_sample_rate_for_callback():
     utterances = asyncio.run(run())
     assert len(utterances) == 1
     assert utterances[0][1] == 8000
+
+
+def test_collector_update_config_rebuilds_derived_state():
+    collector, _, _, _ = make_collector()
+    updated = collector.update_config(
+        sample_rate=8000,
+        frame_ms=20,
+        min_speech_duration_ms=150,
+    )
+    assert updated.sample_rate == 8000
+    assert updated.frame_ms == 20
+    assert updated.expected_frame_bytes == 320
+    assert collector.serialize_config()["min_speech_duration_ms"] == 150
+    assert collector._audio_stats.expected_sample_rate == 8000
+    assert collector._audio_stats.expected_frame_ms == 20
+    assert collector._pre_buffer.maxlen == updated.pre_speech_frames
+
+
+def test_collector_update_config_rejects_unknown_field():
+    collector, _, _, _ = make_collector()
+    with pytest.raises(ValueError, match="unknown"):
+        collector.update_config(nope=1)
+
+
+def test_collector_update_config_rejects_while_recording():
+    async def run():
+        vad = FakeVADProvider([[VADEvent("vad.speech_start", 0.9, 30)]])
+        collector, _, _, _ = make_collector(vad=vad)
+        await collector.ingest_frame(make_frame(sequence=0))
+        return collector
+
+    collector = asyncio.run(run())
+    with pytest.raises(RuntimeError, match="recording"):
+        collector.update_config(min_speech_duration_ms=150)
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields, replace
 
 from converse_framework.audio_utils import (
     AudioFrame,
@@ -79,6 +79,14 @@ class UtteranceCollectorConfig:
             self, "expected_frame_bytes", self.bytes_per_ms * self.frame_ms
         )
 
+    def to_dict(self) -> dict[str, int | float]:
+        """Return only caller-configurable fields for persistence."""
+        return {
+            item.name: getattr(self, item.name)
+            for item in fields(self)
+            if item.init
+        }
+
 
 class AudioUtteranceCollector:
     """VAD-driven utterance collector.
@@ -125,6 +133,34 @@ class AudioUtteranceCollector:
     @property
     def current_mode(self) -> str:
         return self._recording_mode
+
+    def serialize_config(self) -> dict[str, int | float]:
+        """Return the current collector configuration for app persistence."""
+        return self.config.to_dict()
+
+    def update_config(self, **overrides: int | float) -> UtteranceCollectorConfig:
+        """Update collector tuning knobs and rebuild derived state.
+
+        The update is rejected while recording so an in-flight utterance
+        cannot be interpreted with mixed frame sizes, sample rates, or
+        rejection gates.
+        """
+        if self._recording:
+            raise RuntimeError("cannot update collector config while recording")
+        allowed = set(self.config.to_dict())
+        unknown = set(overrides) - allowed
+        if unknown:
+            names = ", ".join(sorted(unknown))
+            raise ValueError(f"unknown collector config field(s): {names}")
+        self.config = replace(self.config, **overrides)
+        self._audio_stats = AudioFrameStats(
+            expected_sample_rate=self.config.sample_rate,
+            expected_channels=self.config.channels,
+            expected_frame_ms=self.config.frame_ms,
+        )
+        self._pre_buffer = deque(maxlen=self.config.pre_speech_frames)
+        self._utterance_buffer.clear()
+        return self.config
 
     async def cancel_active_turn(self, reason: str) -> None:
         if self._cancel_callback is not None:

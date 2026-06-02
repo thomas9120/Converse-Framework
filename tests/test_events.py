@@ -2,7 +2,12 @@
 
 import asyncio
 
-from converse_framework.events import EventSink, FrameworkEvent, QueueEventSink
+from converse_framework.events import (
+    EventSink,
+    FrameworkEvent,
+    QueueEventSink,
+    TransportEventSink,
+)
 
 
 def test_framework_event_has_type_ts_payload():
@@ -73,3 +78,24 @@ def test_event_timestamps_are_monotonic():
 
     ts1, ts2 = asyncio.run(run())
     assert ts2 >= ts1
+
+
+def test_transport_event_sink_forwards_framework_event():
+    class FakeTransport:
+        def __init__(self):
+            self.events = []
+
+        async def send_event(self, event):
+            self.events.append(event)
+
+    async def run():
+        transport = FakeTransport()
+        sink = TransportEventSink(transport)
+        await sink.emit("bridge.event", ok=True)
+        return transport.events
+
+    events = asyncio.run(run())
+    assert len(events) == 1
+    assert isinstance(events[0], FrameworkEvent)
+    assert events[0].type == "bridge.event"
+    assert events[0].payload == {"ok": True}

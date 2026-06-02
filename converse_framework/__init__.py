@@ -15,6 +15,7 @@ from converse_framework.events import (
     EventSink,
     FrameworkEvent,
     QueueEventSink,
+    TransportEventSink,
 )
 from converse_framework.pipeline import (
     PipelineConfig,
@@ -32,6 +33,7 @@ from converse_framework.protocols import (
     VADProvider,
 )
 from converse_framework.providers.unavailable import extra_hint_for
+from converse_framework.providers.unavailable import missing_extra_for
 from converse_framework.registry import (
     ProviderBundle,
     build_provider,
@@ -72,6 +74,7 @@ __all__ = [
     "TTSProvider",
     "TranscriptEvent",
     "Transport",
+    "TransportEventSink",
     "UtteranceCollectorConfig",
     "VADEvent",
     "VADProvider",
@@ -83,6 +86,7 @@ __all__ = [
     "float_audio_to_wav_bytes",
     "is_provider_available",
     "make_tone_wav",
+    "missing_extra_for",
     "parse_audio_frame",
     "pcm_s16le_to_float32",
     "register_provider",

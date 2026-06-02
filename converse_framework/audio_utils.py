@@ -362,6 +362,9 @@ def parse_audio_frame(payload: dict[str, Any], expected: AudioFrameStats) -> Aud
         ValueError: If the payload has an unexpected sample rate,
             channel count, frame duration, encoding, sequence
             number, base64 ``data`` field, or decoded byte length.
+            WebSocket consumers should catch this and usually forward
+            an ``audio.frame_error`` event containing the exception
+            message so clients can drop the bad frame and continue.
     """
     sample_rate = int(payload.get("sample_rate", 0))
     channels = int(payload.get("channels", 0))

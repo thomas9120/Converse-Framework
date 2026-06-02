@@ -375,3 +375,5 @@ def test_status_only_with_missing_extra_returns_unavailable(monkeypatch):
     asr_status = next(s for s in statuses if s["kind"] == "asr")
     assert asr_status["ready"] is False
     assert "converse-framework[faster-whisper]" in asr_status["message"]
+    assert asr_status["install_hint"] == "converse-framework[faster-whisper]"
+    assert asr_status["missing_extra"] == "faster-whisper"

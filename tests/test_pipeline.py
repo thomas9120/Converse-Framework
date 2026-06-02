@@ -81,6 +81,28 @@ def test_text_turn_with_mock_providers_emits_core_events():
     assert "turn.finished" in events
 
 
+def test_text_turn_marks_vad_events_text_only():
+    async def run_turn():
+        queue = asyncio.Queue()
+        pipeline = SpeechPipeline(
+            mock_bundle(),
+            QueueEventSink(queue),
+            PipelineConfig(tts_chunk_chars=60),
+        )
+
+        await pipeline.handle_text_turn("hello framework")
+        await asyncio.sleep(0.05)
+        return drain(queue)
+
+    events = asyncio.run(run_turn())
+    vad_events = [
+        event for event in events if event["type"] in {"vad.speech_start", "vad.speech_end"}
+    ]
+    assert len(vad_events) == 2
+    assert all(event["payload"]["source"] == "text" for event in vad_events)
+    assert all(event["payload"]["text_only"] is True for event in vad_events)
+
+
 def test_audio_turn_with_mock_asr_emits_response_events():
     async def run_turn():
         queue = asyncio.Queue()

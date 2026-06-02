@@ -96,6 +96,23 @@ class PocketTTSProvider(TTSProvider):
         await loop.run_in_executor(None, release)
         return self.status
 
+    def set_quantize(self, quantize: bool) -> ProviderStatus:
+        """Switch quantization mode and unload cached model state if needed.
+
+        The next :meth:`load` or synthesis request reloads Pocket TTS
+        with the updated mode. If the requested mode is already active,
+        loaded model state is kept.
+        """
+        requested = bool(quantize)
+        with self._lock:
+            if self.quantize == requested:
+                return self.status
+            self.quantize = requested
+            self._model = None
+            self._voice_state = None
+            self._load_error = None
+            return self.status
+
     async def stream_audio(self, text: str) -> AsyncIterator[AudioChunk]:
         async for chunk in self.stream_audio_with_progress(text):
             yield chunk

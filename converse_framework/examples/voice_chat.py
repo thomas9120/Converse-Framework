@@ -5,8 +5,8 @@ feeds PCM frames into the :class:`SpeechPipeline` after detecting speech
 end. It is the recommended starting point for any consumer that wants
 to build a voice assistant on top of the framework.
 
-The example is **manual** by design — it requires either a working
-microphone or a WAV file to read from, and it is not exercised by the
+The example is **manual** by design — it reads a WAV file supplied with
+``--input`` and is not exercised by the
 automated test suite. The text-only example in
 :mod:`converse_framework.examples.text_chat` is the one covered by
 tests.
@@ -17,18 +17,19 @@ Usage
 Run the voice example from the repository root after installing the
 optional ``silero`` and ``faster-whisper`` extras::
 
-    python -m converse_framework.examples.voice_chat
+    python -m converse_framework.examples.voice_chat --input path/to/16k_mono.wav
 
 The example will:
 
 1. Build a provider bundle (``silero`` VAD, ``faster-whisper`` ASR,
    ``llamacpp`` LLM, ``kokoro`` TTS by default).
-2. Open a microphone stream at 16 kHz mono (or read from a file when
-   ``--input path/to/file.wav`` is passed).
+2. Read 16 kHz mono PCM frames from the WAV file passed with
+   ``--input path/to/file.wav``.
 3. Feed 30 ms PCM frames into the utterance collector.
 4. For each completed utterance, hand the PCM bytes to
    :meth:`SpeechPipeline.handle_audio_turn`.
-5. Stream ``tts.audio`` events to the default audio output.
+5. Emit pipeline events, including any ``tts.audio`` chunks, through the
+   configured event sink. Consumer apps own playback.
 
 Implementation notes
 --------------------
@@ -77,7 +78,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m converse_framework.examples.voice_chat",
         description=(
-            "Manual voice example. Streams microphone (or WAV file) frames "
+            "Manual voice example. Streams WAV-file frames "
             "through the framework's utterance collector and pipeline. "
             "Run --mock to avoid heavy provider dependencies."
         ),

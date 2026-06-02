@@ -34,9 +34,11 @@ from converse_framework.protocols import (
     VADProvider,
 )
 from converse_framework.providers.unavailable import (
+    EXTRAS,
     EXTRA_HINTS,
     UnavailableProvider,
     extra_hint_for,
+    missing_extra_for,
 )
 from converse_framework.registry import (
     ProviderBundle,
@@ -161,6 +163,26 @@ def test_build_provider_with_fake_model_for_pocket_tts():
     assert provider.status.ready is True
 
 
+def test_pocket_tts_set_quantize_unloads_when_mode_changes():
+    provider = build_provider(
+        "tts",
+        "pocket-tts",
+        {"_model": object(), "_voice_state": object(), "quantize": False},
+    )
+
+    unchanged = provider.set_quantize(False)
+    assert unchanged.loaded is True
+    assert provider._model is not None
+    assert provider._voice_state is not None
+
+    changed = provider.set_quantize(True)
+    assert changed.loaded is False
+    assert provider.quantize is True
+    assert provider._model is None
+    assert provider._voice_state is None
+    assert "int8" in changed.message
+
+
 # ---------------------------------------------------------------------------
 # Missing-dep friendly errors
 # ---------------------------------------------------------------------------
@@ -198,6 +220,8 @@ def test_extra_hint_for_known_providers():
     assert "converse-framework[kokoro]" == extra_hint_for("tts", "kokoro")
     assert "converse-framework[kokoro]" == extra_hint_for("tts", "kokoro-onnx")
     assert "converse-framework[pocket-tts]" == extra_hint_for("tts", "pocket-tts")
+    assert "silero" == missing_extra_for("vad", "silero")
+    assert "kokoro" == missing_extra_for("tts", "kokoro-onnx")
 
 
 def test_extra_hint_for_unknown_provider_is_none():
@@ -206,6 +230,7 @@ def test_extra_hint_for_unknown_provider_is_none():
 
 def test_extra_hint_table_is_exported():
     assert isinstance(EXTRA_HINTS, dict)
+    assert isinstance(EXTRAS, dict)
     assert ("vad", "silero") in EXTRA_HINTS
 
 
@@ -213,6 +238,8 @@ def test_unavailable_provider_includes_extra_hint():
     p = UnavailableProvider("vad", "silero")
     assert "converse-framework[silero]" in p.status.message
     assert "pip install" in p.status.message
+    assert p.status.install_hint == "converse-framework[silero]"
+    assert p.status.missing_extra == "silero"
 
 
 def test_unavailable_provider_unknown_extra_falls_back():

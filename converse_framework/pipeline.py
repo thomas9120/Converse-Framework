@@ -141,7 +141,9 @@ class SpeechPipeline:
         turn_id = self._next_turn_id(turn_state)
         await self.cancel_tts("new_user_turn")
         await self.sink.emit("turn.started", mode=turn_mode, turn_id=turn_id)
-        await self.sink.emit("vad.speech_start", mode=turn_mode, source="text")
+        await self.sink.emit(
+            "vad.speech_start", mode=turn_mode, source="text", text_only=True
+        )
 
         final_transcript = ""
         async for transcript in self.providers.asr.transcribe_text_input(text):
@@ -159,6 +161,7 @@ class SpeechPipeline:
             "vad.speech_end",
             mode=turn_mode,
             source="text",
+            text_only=True,
             latency_ms=elapsed_ms(started),
         )
         if not final_transcript:

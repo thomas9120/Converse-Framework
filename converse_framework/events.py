@@ -72,3 +72,23 @@ class QueueEventSink(EventSink):
         await self.queue.put(
             {"type": event_type, "ts": time.perf_counter(), "payload": payload}
         )
+
+
+class TransportEventSink(EventSink):
+    """Event sink adapter that forwards emitted events to a transport.
+
+    This is the bridge for consumers that already implemented the
+    :class:`converse_framework.transport.Transport` protocol and want
+    pipeline / collector events delivered through ``send_event`` without
+    writing their own small adapter class.
+
+    Args:
+        transport: Object with an async ``send_event(FrameworkEvent)``
+            method, typically a ``Transport`` implementation.
+    """
+
+    def __init__(self, transport) -> None:
+        self.transport = transport
+
+    async def emit(self, event_type: str, **payload: Any) -> None:
+        await self.transport.send_event(FrameworkEvent(event_type, payload))
