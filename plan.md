@@ -502,7 +502,7 @@ Goal: prove the framework is useful outside the browser harness.
 
 Tasks:
 
-- Define `Transport` protocol:
+- [x] Define `Transport` protocol:
 
 ```python
 class Transport(Protocol):
@@ -513,17 +513,32 @@ class Transport(Protocol):
         ...
 ```
 
-- Implement `QueueTransport` for tests.
-- Keep `WebSocketTransport` in the harness, not the framework.
-- Add a small example or optional CLI consumer after the pipeline and collector are stable.
-- The CLI can use mock providers by default and real providers only when extras are installed.
-- Do not make the CLI the first proof of extraction; framework tests and harness compatibility come first.
+- [x] Implement `QueueTransport` for tests.
+- [x] Keep `WebSocketTransport` in the harness, not the framework.
+- [x] Add a small example or optional CLI consumer after the pipeline and collector are stable.
+- [x] The CLI can use mock providers by default and real providers only when extras are installed.
+- [x] Do not make the CLI the first proof of extraction; framework tests and harness compatibility come first.
 
 Tests:
 
-- `QueueTransport` round trip.
-- CLI/example text conversation with mock providers.
-- Optional manual voice example documented separately.
+- [x] `QueueTransport` round trip.
+- [x] CLI/example text conversation with mock providers.
+- [x] Optional manual voice example documented separately.
+
+Notes:
+
+* `converse_framework.examples.text_chat` ships a `run_text_chat`
+  driver that is exercised by `tests/test_examples.py` (10 tests).
+  The CLI is a thin wrapper over that driver and is invoked with
+  `python -m converse_framework.examples.text_chat`.
+* `converse_framework.examples.voice_chat` is the manual voice
+  example. Its module docstring documents the WAV-file driven flow
+  and the collector → pipeline wiring. It is intentionally not
+  covered by the automated suite.
+* The harness exposes `conversational_harness.transport.WebSocketTransport`,
+  a small FastAPI `WebSocket` adapter that satisfies the framework
+  `Transport` protocol. It is covered by 5 harness tests in
+  `tests/test_transport.py`.
 
 ## Phase 7: Documentation, API Review, and Publish Prep
 
@@ -580,6 +595,7 @@ Framework unit tests:
 - cancellation and barge-in
 - utterance collector VAD state and rejection gates
 - queue transport
+- second-consumer text chat example (framework-only, mock providers)
 
 Harness regression tests:
 
