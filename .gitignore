@@ -3,5 +3,6 @@ nul
 /.pi-lens
 /.pi-lens/cache
 /.pi-lens
+/.opencode
 /converse_framework/examples/__pycache__
 /tests/__pycache__
