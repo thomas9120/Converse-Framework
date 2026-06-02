@@ -11,7 +11,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from converse_framework.audio_utils import float_audio_to_pcm_s16le_bytes
 from converse_framework.protocols import (
@@ -35,6 +35,31 @@ class PocketTTSProvider(TTSProvider):
         self._voice_state = config.get("_voice_state")
         self._load_error: str | None = None
         self._lock = threading.Lock()
+        # Known voice identifiers for pocket-tts; listed here so status
+        # can advertise them without importing the heavy backend.
+        self._known_voices = (
+            {"id": "azelma", "label": "Azelma", "language": "en"},
+            {"id": "bela", "label": "Bela", "language": "en"},
+            {"id": "conrad", "label": "Conrad", "language": "en"},
+            {"id": "demeter", "label": "Demeter", "language": "en"},
+            {"id": "ebenezer", "label": "Ebenezer", "language": "en"},
+            {"id": "ferdinand", "label": "Ferdinand", "language": "en"},
+            {"id": "gaspard", "label": "Gaspard", "language": "en"},
+            {"id": "horace", "label": "Horace", "language": "en"},
+            {"id": "ivo", "label": "Ivo", "language": "en"},
+            {"id": "jean", "label": "Jean", "language": "fr"},
+            {"id": "kimber", "label": "Kimber", "language": "en"},
+            {"id": "lobelia", "label": "Lobelia", "language": "en"},
+            {"id": "marie", "label": "Marie", "language": "fr"},
+            {"id": "nico", "label": "Nico", "language": "en"},
+            {"id": "orion", "label": "Orion", "language": "en"},
+            {"id": "pavel", "label": "Pavel", "language": "en"},
+            {"id": "quito", "label": "Quito", "language": "en"},
+            {"id": "river", "label": "River", "language": "en"},
+            {"id": "sophia", "label": "Sophia", "language": "en"},
+            {"id": "tom", "label": "Tom", "language": "en"},
+            {"id": "xavier", "label": "Xavier", "language": "en"},
+        )
 
     @property
     def status(self) -> ProviderStatus:
@@ -49,15 +74,21 @@ class PocketTTSProvider(TTSProvider):
                 loaded=False,
                 supports_model_management=True,
                 supports_voice_selection=True,
+                active_voice=self.voice,
+                voices=self._known_voices,
+                status_level="error",
             )
         mode = "int8" if self.quantize else "fp32"
-        if self._model is not None and self._voice_state is not None:
+        loaded = self._model is not None and self._voice_state is not None
+        if loaded:
             message = f"Loaded Pocket TTS voice '{self.voice}' ({mode})."
+            status_level = "ready"
         else:
             message = (
                 f"Configured for Pocket TTS voice '{self.voice}' ({mode}). "
                 "Model and voice load on first TTS request."
             )
+            status_level = "configured"
         return ProviderStatus(
             name="pocket-tts",
             kind="tts",
@@ -68,17 +99,28 @@ class PocketTTSProvider(TTSProvider):
                 languages=("en", "fr", "de", "pt", "it", "es"),
             ),
             provider_id="pocket-tts",
-            loaded=self._model is not None and self._voice_state is not None,
+            loaded=loaded,
             supports_model_management=True,
             supports_voice_selection=True,
+            active_voice=self.voice,
+            voices=self._known_voices,
+            status_level=status_level,
         )
 
     async def check_status(self) -> ProviderStatus:
+        return await self.probe_status()
+
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap probe: check import availability, no model load."""
         try:
             import pocket_tts  # type: ignore[import-not-found]  # noqa: F401
         except Exception as exc:  # pragma: no cover - import path
             self._load_error = str(exc)
         return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        """May load heavy resources."""
+        return await self.load()
 
     async def load(self) -> ProviderStatus:
         loop = asyncio.get_running_loop()
@@ -130,7 +172,10 @@ class PocketTTSProvider(TTSProvider):
                 with self._lock:
                     started = time.perf_counter()
                     self._emit_progress(
-                        loop, progress, "loading", f"Loading Pocket TTS voice '{self.voice}'."
+                        loop,
+                        progress,
+                        "loading",
+                        f"Loading Pocket TTS voice '{self.voice}'.",
                     )
                     self._ensure_model()
                     self._emit_progress(
@@ -139,7 +184,9 @@ class PocketTTSProvider(TTSProvider):
                         "loaded",
                         f"Pocket TTS ready after {round(time.perf_counter() - started, 1)}s.",
                     )
-                    self._emit_progress(loop, progress, "generating", "Generating speech.")
+                    self._emit_progress(
+                        loop, progress, "generating", "Generating speech."
+                    )
                     assert self._model is not None
                     target_samples = max(
                         1, int(self._model.sample_rate * self.coalesce_ms / 1000)
@@ -174,7 +221,9 @@ class PocketTTSProvider(TTSProvider):
                                         channels=1,
                                         encoding="pcm_s16le",
                                         duration_ms=int(
-                                            pending_samples * 1000 / self._model.sample_rate
+                                            pending_samples
+                                            * 1000
+                                            / self._model.sample_rate
                                         ),
                                         final=False,
                                     )
@@ -238,6 +287,8 @@ class PocketTTSProvider(TTSProvider):
     ) -> None:
         if not progress:
             return
-        asyncio.run_coroutine_threadsafe(
-            progress("tts.progress", {"stage": stage, "message": message}), loop
-        )
+
+        async def _fire() -> None:
+            await progress("tts.progress", {"stage": stage, "message": message})
+
+        asyncio.run_coroutine_threadsafe(_fire(), loop)

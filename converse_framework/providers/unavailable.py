@@ -13,7 +13,7 @@ from converse_framework.protocols import (
     TTSProvider,
     TranscriptEvent,
     VADProvider,
-)
+)  # fmt: skip
 
 
 # Map of provider name -> optional-dependency extra. Used to construct a
@@ -91,6 +91,7 @@ class UnavailableProvider(VADProvider, ASRProvider, LLMProvider, TTSProvider):
             missing_extra=missing_extra_for(kind, name),
             provider_id=name,
             loaded=False,
+            status_level="unavailable",
         )
 
     @property

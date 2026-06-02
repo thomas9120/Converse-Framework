@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 
@@ -68,6 +68,15 @@ class ProviderStatus:
             should not call :meth:`load` / :meth:`unload` on it.
         supports_model_management: Provider exposes model hot-swap.
         supports_voice_selection: Provider exposes voice selection.
+        voices: Tuple of voice metadata dicts (``id``, ``label``, …)
+            supported by this provider, if discoverable.
+        active_voice: Currently selected voice identifier, if any.
+        models: Tuple of model metadata dicts (``id``, ``label``, …)
+            supported by this provider, if discoverable.
+        active_model: Currently selected model identifier, if any.
+        status_level: Categorical readiness level. One of
+            ``"ready"`` | ``"configured"`` | ``"loading"`` |
+            ``"error"`` | ``"unavailable"``.
     """
 
     name: str
@@ -83,6 +92,11 @@ class ProviderStatus:
     managed_externally: bool = False
     supports_model_management: bool = False
     supports_voice_selection: bool = False
+    voices: tuple[dict[str, str], ...] = ()
+    active_voice: str | None = None
+    models: tuple[dict[str, str], ...] = ()
+    active_model: str | None = None
+    status_level: str = "ready"
 
 
 @dataclass(frozen=True)
@@ -181,12 +195,23 @@ class VADProvider(Protocol):
     The ``status`` property exposes the current
     :class:`ProviderStatus`; :meth:`check_status` is the async form
     that performs a real probe (file existence, model loaded, ...).
+
+    ``probe_status`` is a cheap, no-model-load variant;
+    ``load_status`` may load heavy resources.
     """
 
     @property
     def status(self) -> ProviderStatus: ...
 
     async def check_status(self) -> ProviderStatus: ...
+
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap readiness probe, does not load heavy resources."""
+        return await self.check_status()
+
+    async def load_status(self) -> ProviderStatus:
+        """May load or initialise heavy resources."""
+        return await self.probe_status()
 
     async def process_frame(self, frame) -> list[VADEvent]: ...
 
@@ -209,13 +234,19 @@ class ASRProvider(Protocol):
 
     async def check_status(self) -> ProviderStatus: ...
 
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap readiness probe, does not load heavy resources."""
+        return await self.check_status()
+
+    async def load_status(self) -> ProviderStatus:
+        """May load or initialise heavy resources."""
+        return await self.load()
+
     async def load(self) -> ProviderStatus: ...
 
-    async def transcribe_text_input(
-        self, text: str
-    ) -> AsyncIterator[TranscriptEvent]: ...
+    def transcribe_text_input(self, text: str) -> AsyncIterator[TranscriptEvent]: ...
 
-    async def transcribe_audio(
+    def transcribe_audio(
         self,
         pcm_s16le: bytes,
         sample_rate: int,
@@ -241,9 +272,15 @@ class LLMProvider(Protocol):
 
     async def check_status(self) -> ProviderStatus: ...
 
-    async def stream_response(
-        self, messages: list[dict[str, str]]
-    ) -> AsyncIterator[str]: ...
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap readiness probe, does not load heavy resources."""
+        return await self.check_status()
+
+    async def load_status(self) -> ProviderStatus:
+        """May load or initialise heavy resources."""
+        return await self.check_status()
+
+    def stream_response(self, messages: list[dict[str, str]]) -> AsyncIterator[str]: ...
 
 
 @runtime_checkable
@@ -262,12 +299,20 @@ class TTSProvider(Protocol):
 
     async def check_status(self) -> ProviderStatus: ...
 
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap readiness probe, does not load heavy resources."""
+        return await self.check_status()
+
+    async def load_status(self) -> ProviderStatus:
+        """May load or initialise heavy resources."""
+        return await self.load()
+
     async def load(self) -> ProviderStatus: ...
 
     async def unload(self) -> ProviderStatus: ...
 
-    async def stream_audio(self, text: str) -> AsyncIterator[AudioChunk]: ...
+    def stream_audio(self, text: str) -> AsyncIterator[AudioChunk]: ...
 
-    async def stream_audio_with_progress(
+    def stream_audio_with_progress(
         self, text: str, progress: ProgressCallback | None = None
     ) -> AsyncIterator[AudioChunk]: ...

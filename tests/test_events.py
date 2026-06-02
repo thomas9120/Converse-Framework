@@ -99,3 +99,57 @@ def test_transport_event_sink_forwards_framework_event():
     assert isinstance(events[0], FrameworkEvent)
     assert events[0].type == "bridge.event"
     assert events[0].payload == {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# provider_events helper functions
+# ---------------------------------------------------------------------------
+
+
+def test_provider_loading_event_shape():
+    from converse_framework.provider_events import provider_loading_event
+
+    result = provider_loading_event(
+        kind="asr",
+        provider="faster-whisper",
+        message="Loading model...",
+    )
+    assert result["event_type"] == "provider.loading"
+    assert result["kind"] == "asr"
+    assert result["provider"] == "faster-whisper"
+    assert result["loaded"] is False
+    assert "message" in result
+    assert result["message"] == "Loading model..."
+
+
+def test_provider_loaded_event_shape():
+    from converse_framework.provider_events import provider_loaded_event
+
+    result = provider_loaded_event(
+        kind="tts",
+        provider="pocket-tts",
+        latency_ms=1500,
+    )
+    assert result["event_type"] == "provider.loaded"
+    assert result["kind"] == "tts"
+    assert result["provider"] == "pocket-tts"
+    assert result["loaded"] is True
+    assert result["latency_ms"] == 1500
+
+
+def test_provider_error_event_shape():
+    from converse_framework.provider_events import provider_error_event
+
+    result = provider_error_event(
+        kind="asr",
+        provider="faster-whisper",
+        message="Load timed out",
+        error_type="TimeoutError",
+        loaded=False,
+    )
+    assert result["event_type"] == "provider.error"
+    assert result["kind"] == "asr"
+    assert result["provider"] == "faster-whisper"
+    assert result["error_type"] == "TimeoutError"
+    assert result["message"] == "Load timed out"
+    assert result["loaded"] is False

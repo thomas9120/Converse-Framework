@@ -162,6 +162,26 @@ class ProviderBundle:
         ]
         return _serialize_statuses(items)
 
+    async def probe_statuses(self) -> list[dict[str, Any]]:
+        """Cheap readiness probe - does not load models."""
+        items = [
+            await self.vad.probe_status(),
+            await self.asr.probe_status(),
+            await self.llm.probe_status(),
+            await self.tts.probe_status(),
+        ]
+        return _serialize_statuses(items)
+
+    async def load_statuses(self) -> list[dict[str, Any]]:
+        """May load or initialise heavy resources."""
+        items = [
+            await self.vad.load_status(),
+            await self.asr.load_status(),
+            await self.llm.load_status(),
+            await self.tts.load_status(),
+        ]
+        return _serialize_statuses(items)
+
 
 def build_provider_bundle(
     config: Mapping[str, Mapping[str, Any]],
@@ -237,7 +257,7 @@ async def status_only(
         kind_config = dict(config.get(kind, {}))
         name = str(kind_config.get("provider", "mock"))
         provider = build_provider(kind, name, kind_config)
-        statuses.append(await provider.check_status())
+        statuses.append(await provider.probe_status())
     return _serialize_statuses(statuses)
 
 
@@ -256,6 +276,11 @@ def _serialize_status(item: ProviderStatus) -> dict[str, Any]:
         "managed_externally": item.managed_externally,
         "supports_model_management": item.supports_model_management,
         "supports_voice_selection": item.supports_voice_selection,
+        "voices": list(item.voices),
+        "active_voice": item.active_voice,
+        "models": list(item.models),
+        "active_model": item.active_model,
+        "status_level": item.status_level,
     }
 
 

@@ -13,7 +13,6 @@ import sys
 
 import pytest
 
-from converse_framework.examples import text_chat
 from converse_framework.examples.text_chat import (
     TextChatExampleConfig,
     _format_event_for_cli,
@@ -145,9 +144,7 @@ def test_parse_provider_args_keeps_vad_mock_default():
 
 
 def test_parse_provider_args_overrides_kinds():
-    parsed = _parse_provider_args(
-        ["asr=faster-whisper", "llm=llamacpp", "tts=kokoro"]
-    )
+    parsed = _parse_provider_args(["asr=faster-whisper", "llm=llamacpp", "tts=kokoro"])
     assert parsed["asr"] == "faster-whisper"
     assert parsed["llm"] == "llamacpp"
     assert parsed["tts"] == "kokoro"
@@ -171,9 +168,7 @@ def test_parse_provider_args_rejects_empty_name():
 
 
 def test_format_event_for_cli_dispatches_per_event_type():
-    formatted = _format_event_for_cli(
-        {"type": "llm.token", "payload": {"text": "hi"}}
-    )
+    formatted = _format_event_for_cli({"type": "llm.token", "payload": {"text": "hi"}})
     assert "hi" in formatted
 
     formatted = _format_event_for_cli(
@@ -214,9 +209,12 @@ def test_websocket_voice_runtime_uses_transport_sink():
         async def send_event(self, event):
             self.events.append(event)
 
+        async def receive_event(self):
+            raise NotImplementedError
+
     transport = FakeTransport()
-    runtime = build_websocket_voice_runtime(transport)
-    assert runtime.pipeline.sink.transport is transport
+    runtime = build_websocket_voice_runtime(transport)  # type: ignore[arg-type]
+    assert runtime.pipeline.sink.transport is transport  # type: ignore[attr-defined]
     assert runtime.collector.serialize_config()["sample_rate"] == 16000
     assert isinstance(FrameworkEvent("x"), FrameworkEvent)
 
@@ -234,10 +232,13 @@ def test_websocket_voice_handler_emits_audio_frame_error():
         async def send_event(self, event):
             self.events.append(event)
 
+        async def receive_event(self):
+            raise NotImplementedError
+
     async def run():
         transport = FakeTransport()
-        runtime = build_websocket_voice_runtime(transport)
-        await handle_websocket_message(
+        runtime = build_websocket_voice_runtime(transport)  # type: ignore[arg-type]
+        await handle_websocket_message(  # type: ignore[arg-type]
             runtime,
             transport,
             {

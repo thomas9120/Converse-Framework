@@ -10,9 +10,10 @@ The ``faster_whisper`` package is imported lazily inside
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from converse_framework.audio_utils import pcm_s16le_to_float32
 from converse_framework.protocols import (
@@ -39,7 +40,9 @@ class FasterWhisperASRProvider(ASRProvider):
             config.get("condition_on_previous_text", False)
         )
         self.temperature = config.get("temperature", 0)
-        self.compression_ratio_threshold = config.get("compression_ratio_threshold", 2.4)
+        self.compression_ratio_threshold = config.get(
+            "compression_ratio_threshold", 2.4
+        )
         self.log_prob_threshold = config.get("log_prob_threshold", -0.5)
         self.no_speech_threshold = config.get("no_speech_threshold", 0.2)
         self.suppress_tokens = config.get("suppress_tokens")
@@ -56,14 +59,17 @@ class FasterWhisperASRProvider(ASRProvider):
                 ready=False,
                 message=f"faster-whisper failed to load: {self._load_error}",
                 capabilities=ProviderCapabilities(),
+                status_level="error",
             )
         if self._model is not None:
             message = f"Loaded {self.model_name} on {self.device}/{self.compute_type}."
+            status_level = "ready"
         else:
             message = (
                 f"Configured for {self.model_name} on {self.device}/{self.compute_type}. "
                 "Model loads on first voice transcription and may download if not cached."
             )
+            status_level = "configured"
         return ProviderStatus(
             name="faster-whisper",
             kind="asr",
@@ -73,15 +79,27 @@ class FasterWhisperASRProvider(ASRProvider):
                 languages=(str(self.language),) if self.language else ("auto",)
             ),
             provider_id="faster-whisper",
+            loaded=self._model is not None,
+            active_model=self.model_name,
+            models=({"id": self.model_name, "label": self.model_name},),
+            status_level=status_level,
         )
 
     async def check_status(self) -> ProviderStatus:
+        return await self.probe_status()
+
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap probe: check import availability, no model load."""
         if self._model is None:
             try:
                 import faster_whisper  # type: ignore[import-not-found]  # noqa: F401
             except Exception as exc:  # pragma: no cover - import path
                 self._load_error = str(exc)
         return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        """May load heavy resources."""
+        return await self.load()
 
     async def load(self) -> ProviderStatus:
         if self._model is not None:
@@ -151,7 +169,6 @@ class FasterWhisperASRProvider(ASRProvider):
         progress: ProgressCallback | None,
         loop: asyncio.AbstractEventLoop,
     ) -> list[str]:
-        assert self._model is not None
         started = time.perf_counter()
         logger.info(
             "[ASR] transcribe_blocking called, audio length=%d samples (%.2fs)",
@@ -159,20 +176,29 @@ class FasterWhisperASRProvider(ASRProvider):
             audio.size / 16000,
         )
         self._emit_progress_threadsafe(
-            loop, progress, "loading", f"Loading faster-whisper model {self.model_name}."
+            loop,
+            progress,
+            "loading",
+            f"Loading faster-whisper model {self.model_name}.",
         )
-        logger.info(
-            "[ASR] model loaded in %.1fs, starting inference on %s/%s",
-            time.perf_counter() - started,
-            self.device,
-            self.compute_type,
-        )
+        with contextlib.suppress(Exception):
+            self._ensure_model()
+        if self._model is None:
+            raise RuntimeError(
+                f"faster-whisper model did not load: {self._load_error or 'unknown error'}"
+            )
         self._emit_progress_threadsafe(
             loop,
             progress,
             "loaded",
             f"Model ready after {round(time.perf_counter() - started, 1)}s. "
             "Running inference.",
+        )
+        logger.info(
+            "[ASR] model loaded in %.1fs, starting inference on %s/%s",
+            time.perf_counter() - started,
+            self.device,
+            self.compute_type,
         )
         transcribe_options = {
             "language": self.language,
@@ -199,8 +225,7 @@ class FasterWhisperASRProvider(ASRProvider):
                 prefix = ""
                 if start is not None and end is not None:
                     prefix = (
-                        f"Segment {round(float(start), 2)}-"
-                        f"{round(float(end), 2)}s: "
+                        f"Segment {round(float(start), 2)}-{round(float(end), 2)}s: "
                     )
                 self._emit_progress_threadsafe(
                     loop, progress, "segment", f"{prefix}{text}"
@@ -245,6 +270,5 @@ class FasterWhisperASRProvider(ASRProvider):
     ) -> None:
         if not progress:
             return
-        asyncio.run_coroutine_threadsafe(
-            progress("asr.progress", {"stage": stage, "message": message}), loop
-        )
+        coro = progress("asr.progress", {"stage": stage, "message": message})
+        asyncio.run_coroutine_threadsafe(coro, loop)  # type: ignore[arg-type]

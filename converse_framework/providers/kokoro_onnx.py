@@ -18,9 +18,9 @@ import asyncio
 import os
 import threading
 import time
+from collections.abc import AsyncIterator
 from dataclasses import replace
 from pathlib import Path
-from typing import AsyncIterator
 
 from converse_framework.audio_utils import float_audio_to_pcm_s16le_bytes
 from converse_framework.protocols import (
@@ -77,12 +77,8 @@ class KokoroOnnxProvider(TTSProvider):
         self.voices_filename = str(config.get("voices_filename", "voices-v1.0.bin"))
         self.model_url = str(config.get("model_url", DEFAULT_KOKORO_MODEL_URL))
         self.voices_url = str(config.get("voices_url", DEFAULT_KOKORO_VOICES_URL))
-        self.onnx_intra_op_num_threads = int(
-            config.get("onnx_intra_op_num_threads", 4)
-        )
-        self.onnx_inter_op_num_threads = int(
-            config.get("onnx_inter_op_num_threads", 1)
-        )
+        self.onnx_intra_op_num_threads = int(config.get("onnx_intra_op_num_threads", 4))
+        self.onnx_inter_op_num_threads = int(config.get("onnx_inter_op_num_threads", 1))
         self.preload_g2p = bool(config.get("preload_g2p", True))
         self._model = config.get("_model")
         self._g2p = config.get("_g2p")
@@ -93,6 +89,7 @@ class KokoroOnnxProvider(TTSProvider):
 
     @property
     def status(self) -> ProviderStatus:
+        loaded = self._model is not None
         if self._load_error:
             return ProviderStatus(
                 name="kokoro-onnx",
@@ -106,6 +103,8 @@ class KokoroOnnxProvider(TTSProvider):
                 loaded=False,
                 supports_model_management=True,
                 supports_voice_selection=True,
+                active_voice=self.voice,
+                status_level="error",
             )
         if self._g2p_error:
             return ProviderStatus(
@@ -117,20 +116,22 @@ class KokoroOnnxProvider(TTSProvider):
                     supports_streaming_tts=True, languages=("en",)
                 ),
                 provider_id="kokoro-onnx",
-                loaded=self._model is not None,
+                loaded=loaded,
                 supports_model_management=True,
                 supports_voice_selection=True,
+                active_voice=self.voice,
+                status_level="error",
             )
 
-        if self._model is not None:
-            message = (
-                f"Loaded Kokoro v1.0 ONNX voice '{self.voice}' ({self.lang})."
-            )
+        if loaded:
+            message = f"Loaded Kokoro v1.0 ONNX voice '{self.voice}' ({self.lang})."
+            status_level = "ready"
         else:
             message = (
                 f"Configured for Kokoro v1.0 ONNX voice '{self.voice}' ({self.lang}). "
                 "Model loads on first TTS request."
             )
+            status_level = "configured"
         return ProviderStatus(
             name="kokoro-onnx",
             kind="tts",
@@ -140,14 +141,21 @@ class KokoroOnnxProvider(TTSProvider):
                 supports_streaming_tts=True, languages=("en",)
             ),
             provider_id="kokoro-onnx",
-            loaded=self._model is not None,
+            loaded=loaded,
             supports_model_management=True,
             supports_voice_selection=True,
+            active_voice=self.voice,
+            status_level=status_level,
         )
 
     async def check_status(self) -> ProviderStatus:
+        return await self.probe_status()
+
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap probe: check import availability, no model load."""
         try:
             import kokoro_onnx  # type: ignore[import-not-found]  # noqa: F401
+
             if self._should_use_misaki():
                 from misaki import en as _en  # type: ignore[import-not-found]  # noqa: F401
                 from misaki import espeak as _espeak  # type: ignore[import-not-found]  # noqa: F401
@@ -157,6 +165,10 @@ class KokoroOnnxProvider(TTSProvider):
             else:
                 self._load_error = str(exc)
         return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        """May load heavy resources."""
+        return await self.load()
 
     async def load(self) -> ProviderStatus:
         loop = asyncio.get_running_loop()
@@ -189,7 +201,10 @@ class KokoroOnnxProvider(TTSProvider):
         loop = asyncio.get_running_loop()
         started = time.perf_counter()
         self._emit_progress(
-            loop, progress, "loading", f"Loading Kokoro voice '{self.voice}'.",
+            loop,
+            progress,
+            "loading",
+            f"Loading Kokoro voice '{self.voice}'.",
             started=started,
         )
         await loop.run_in_executor(None, self._ensure_model)
@@ -212,7 +227,11 @@ class KokoroOnnxProvider(TTSProvider):
                 is_phonemes = True
 
             self._emit_progress(
-                loop, progress, "generating", "Generating speech.", started=started,
+                loop,
+                progress,
+                "generating",
+                "Generating speech.",
+                started=started,
             )
             index = 0
             previous_chunk: AudioChunk | None = None
@@ -279,12 +298,9 @@ class KokoroOnnxProvider(TTSProvider):
         self._g2p_error = None
 
     def _apply_onnx_session_options(self, model_path: str) -> None:
-        if (
-            self.onnx_intra_op_num_threads <= 0
-            and self.onnx_inter_op_num_threads <= 0
-        ):
+        if self.onnx_intra_op_num_threads <= 0 and self.onnx_inter_op_num_threads <= 0:
             return
-        if not hasattr(self._model, "sess"):
+        if self._model is None or not hasattr(self._model, "sess"):
             return
         import onnxruntime as ort  # type: ignore[import-not-found]
 
@@ -319,9 +335,7 @@ class KokoroOnnxProvider(TTSProvider):
             return str(phonemes).strip()
         except Exception as exc:  # pragma: no cover - exercised via tests
             self._g2p_error = str(exc)
-            raise RuntimeError(
-                f"Misaki English phonemization failed: {exc}"
-            ) from exc
+            raise RuntimeError(f"Misaki English phonemization failed: {exc}") from exc
 
     def _should_use_misaki(self) -> bool:
         return self.lang.lower().startswith("en")
@@ -343,13 +357,15 @@ class KokoroOnnxProvider(TTSProvider):
         if target.exists():
             return target
         temp = target.with_suffix(target.suffix + ".part")
-        with httpx.Client(follow_redirects=True, timeout=self.timeout_s) as client:
+        with (
+            httpx.Client(follow_redirects=True, timeout=self.timeout_s) as client,
+            temp.open("wb") as handle,
+        ):
             with client.stream("GET", url) as response:
                 response.raise_for_status()
-                with temp.open("wb") as handle:
-                    for chunk in response.iter_bytes():
-                        if chunk:
-                            handle.write(chunk)
+                for chunk in response.iter_bytes():
+                    if chunk:
+                        handle.write(chunk)
         temp.replace(target)
         return target
 
@@ -368,4 +384,8 @@ class KokoroOnnxProvider(TTSProvider):
         payload = {"stage": stage, "message": message, **extra}
         if started is not None:
             payload["elapsed_ms"] = int((time.perf_counter() - started) * 1000)
-        loop.call_soon_threadsafe(asyncio.create_task, progress("tts.progress", payload))
+
+        async def _fire() -> None:
+            await progress("tts.progress", payload)
+
+        loop.call_soon_threadsafe(asyncio.create_task, _fire())

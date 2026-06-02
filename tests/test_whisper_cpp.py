@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import builtins
 import importlib
+from typing import cast
 
 import pytest
 
@@ -26,8 +27,14 @@ from converse_framework.protocols import ASRProvider, ProviderStatus
 from converse_framework.registry import build_provider
 from converse_framework.providers.unavailable import extra_hint_for
 
+from converse_framework.providers.whisper_cpp import WhisperCppASRProvider  # noqa: F401
 
 pytestmark = pytest.mark.httpx  # marker so the suite can opt-out via -m
+
+
+def _wprovider(cfg: dict | None = None):
+    """Build whisper-cpp provider cast to its concrete type."""
+    return cast(WhisperCppASRProvider, build_provider("asr", "whisper-cpp", cfg or {}))
 
 
 # ---------------------------------------------------------------------------
@@ -48,9 +55,7 @@ def test_module_imports_when_httpx_available():
 
 def test_build_provider_returns_whisper_cpp_instance():
     pytest.importorskip("httpx")
-    provider = build_provider(
-        "asr", "whisper-cpp", {"base_url": "http://example.invalid:8082"}
-    )
+    provider = _wprovider({"base_url": "http://example.invalid:8082"})
     assert isinstance(provider, ASRProvider)
     assert provider.status.provider_id == "whisper-cpp"
     assert provider.status.kind == "asr"
@@ -61,7 +66,7 @@ def test_build_provider_returns_whisper_cpp_instance():
 
 def test_default_config_values():
     pytest.importorskip("httpx")
-    provider = build_provider("asr", "whisper-cpp", {})
+    provider = _wprovider({})
     assert provider.base_url == "http://127.0.0.1:8082"
     assert provider.model == "ggml-small.en.bin"
     assert provider.language == "en"
@@ -71,7 +76,7 @@ def test_default_config_values():
 
 def test_provider_advertises_no_model_or_voice_management():
     pytest.importorskip("httpx")
-    provider = build_provider("asr", "whisper-cpp", {})
+    provider = _wprovider({})
     status = provider.status
     assert status.supports_model_management is False
     assert status.supports_voice_selection is False
@@ -86,7 +91,7 @@ def test_provider_advertises_no_model_or_voice_management():
 
 def test_transcribe_text_input_yields_single_final_event():
     pytest.importorskip("httpx")
-    provider = build_provider("asr", "whisper-cpp", {})
+    provider = _wprovider({})
 
     async def run():
         events = [event async for event in provider.transcribe_text_input("hi")]
@@ -99,7 +104,7 @@ def test_transcribe_text_input_yields_single_final_event():
 
 def test_transcribe_text_input_skips_whitespace_only():
     pytest.importorskip("httpx")
-    provider = build_provider("asr", "whisper-cpp", {})
+    provider = _wprovider({})
 
     async def _collect_empty():
         return [event async for event in provider.transcribe_text_input("   ")]
@@ -160,17 +165,15 @@ def test_transcribe_audio_posts_to_inference_and_parses_text(monkeypatch):
         # 0.05s of silence at 16 kHz mono -> 1600 samples -> 3200 bytes.
         pcm = b"\x00\x00" * 1600
         events = []
-        async for event in provider.transcribe_audio(pcm, 16000):
+        async for event in provider.transcribe_audio(pcm, 16000):  # type: ignore[attr-defined]
             events.append(event)
         return events
 
     # Force the provider into the legacy /inference path (skip the
     # endpoint probe so the test does not need a real HTTP server).
-    provider._endpoint = "/inference"
+    provider._endpoint = "/inference"  # type: ignore[attr-defined]
 
-    monkeypatch.setattr(
-        "httpx.AsyncClient", _FakeAsyncClient, raising=False
-    )
+    monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient, raising=False)
 
     events = asyncio.run(run())
     assert len(events) == 1
@@ -222,9 +225,9 @@ def test_transcribe_audio_falls_back_to_openai_endpoint(monkeypatch):
             return _FakeResponse()
 
     async def run():
-        provider._endpoint = "/v1/audio/transcriptions"
+        provider._endpoint = "/v1/audio/transcriptions"  # type: ignore[attr-defined]
         pcm = b"\x00\x00" * 1600
-        events = [event async for event in provider.transcribe_audio(pcm, 16000)]
+        events = [event async for event in provider.transcribe_audio(pcm, 16000)]  # type: ignore[attr-defined]
         return events
 
     monkeypatch.setattr("httpx.AsyncClient", _FakeAsyncClient, raising=False)
@@ -239,7 +242,7 @@ def test_transcribe_audio_falls_back_to_openai_endpoint(monkeypatch):
 
 def test_transcribe_audio_rejects_invalid_sample_rate():
     pytest.importorskip("httpx")
-    provider = build_provider("asr", "whisper-cpp", {})
+    provider = _wprovider({})
 
     async def run():
         events = []
@@ -253,7 +256,7 @@ def test_transcribe_audio_rejects_invalid_sample_rate():
 
 def test_transcribe_audio_yields_nothing_for_empty_pcm():
     pytest.importorskip("httpx")
-    provider = build_provider("asr", "whisper-cpp", {})
+    provider = _wprovider({})
 
     async def run():
         events = []
@@ -327,9 +330,7 @@ def test_unavailable_provider_for_whisper_cpp_includes_hint():
 
 def test_check_status_ready_on_health_200(monkeypatch):
     pytest.importorskip("httpx")
-    provider = build_provider(
-        "asr", "whisper-cpp", {"base_url": "http://server.test:8082"}
-    )
+    provider = _wprovider({"base_url": "http://server.test:8082"})
 
     class _OkResponse:
         status_code = 200
@@ -357,14 +358,12 @@ def test_check_status_ready_on_health_200(monkeypatch):
     assert isinstance(status, ProviderStatus)
     assert status.ready is True
     assert "reachable" in status.message
-    assert provider._endpoint == "/inference"
+    assert provider._endpoint == "/inference"  # type: ignore[attr-defined]
 
 
 def test_check_status_not_ready_on_connection_error(monkeypatch):
     pytest.importorskip("httpx")
-    provider = build_provider(
-        "asr", "whisper-cpp", {"base_url": "http://nope.invalid:1"}
-    )
+    provider = _wprovider({"base_url": "http://nope.invalid:1"})
 
     class _FakeAsyncClient:
         def __init__(self, *args, **kwargs) -> None:
@@ -384,4 +383,4 @@ def test_check_status_not_ready_on_connection_error(monkeypatch):
     status = asyncio.run(provider.check_status())
     assert status.ready is False
     assert "Cannot reach whisper-server" in status.message
-    assert provider._endpoint is None
+    assert provider._endpoint is None  # type: ignore[attr-defined]

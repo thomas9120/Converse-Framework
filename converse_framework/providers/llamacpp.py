@@ -15,7 +15,7 @@ responsible for wiring the callable that resolves effective sampler values.
 from __future__ import annotations
 
 import json
-from typing import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable
 
 from converse_framework.protocols import (
     LLMProvider,
@@ -55,9 +55,37 @@ class LlamaCppProvider(LLMProvider):
             ),
             capabilities=ProviderCapabilities(),
             provider_id="llamacpp",
+            status_level="configured",
         )
 
     async def check_status(self) -> ProviderStatus:
+        return await self._http_check_status()
+
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap probe: check httpx is importable; no HTTP call."""
+        try:
+            pass  # type: ignore[import-not-found]
+        except Exception as exc:  # pragma: no cover - import path
+            return ProviderStatus(
+                name="llama.cpp",
+                kind="llm",
+                ready=False,
+                message=(
+                    f"llama.cpp provider requires httpx; install with "
+                    f"pip install 'converse-framework[llamacpp]'. ({exc})"
+                ),
+                capabilities=ProviderCapabilities(),
+                provider_id="llamacpp",
+                status_level="unavailable",
+            )
+        # httpx is available; return existing cached status.
+        return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        """Alias for probe_status - HTTP provider has no model loading."""
+        return await self.probe_status()
+
+    async def _http_check_status(self) -> ProviderStatus:
         try:
             import httpx  # type: ignore[import-not-found]
         except Exception as exc:  # pragma: no cover - import path

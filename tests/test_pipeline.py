@@ -2,31 +2,79 @@ import asyncio
 
 from converse_framework.events import QueueEventSink
 from converse_framework.pipeline import PipelineConfig, SpeechPipeline, should_flush_tts
-from converse_framework.protocols import AudioChunk
+from converse_framework.protocols import (
+    AudioChunk,
+    ProviderCapabilities,
+    ProviderStatus,
+)
 from converse_framework.registry import build_provider_bundle
 
 
 class RecordingLLM:
     def __init__(self, tokens=None):
-        self.messages = []
+        self._messages: list[list[dict[str, str]]] = []
         self.tokens = tokens or ["ok."]
 
     @property
-    def status(self):
-        raise NotImplementedError
+    def messages(self) -> list[list[dict[str, str]]]:
+        return self._messages
 
-    async def check_status(self):
-        raise NotImplementedError
+    @property
+    def status(self) -> ProviderStatus:
+        return ProviderStatus(
+            name="recording-llm",
+            kind="llm",
+            ready=True,
+            message="Recording LLM for tests.",
+            capabilities=ProviderCapabilities(),
+        )
 
-    async def stream_response(self, messages):
-        self.messages.append(messages)
+    async def check_status(self) -> ProviderStatus:
+        return self.status
+
+    async def probe_status(self) -> ProviderStatus:
+        return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        return self.status
+
+    async def stream_response(self, messages: list[dict[str, str]]):
+        self._messages.append(messages)
         for token in self.tokens:
             await asyncio.sleep(0)
             yield token
 
 
 class SlowTTS:
-    async def stream_audio_with_progress(self, text, progress=None):
+    @property
+    def status(self) -> ProviderStatus:
+        return ProviderStatus(
+            name="slow-tts",
+            kind="tts",
+            ready=True,
+            message="Slow TTS for tests.",
+            capabilities=ProviderCapabilities(),
+        )
+
+    async def check_status(self) -> ProviderStatus:
+        return self.status
+
+    async def probe_status(self) -> ProviderStatus:
+        return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        return self.status
+
+    async def load(self) -> ProviderStatus:
+        return self.status
+
+    async def unload(self) -> ProviderStatus:
+        return self.status
+
+    async def stream_audio(self, text: str):
+        yield AudioChunk(data=b"x", final=True)  # type: ignore[unreachable]
+
+    async def stream_audio_with_progress(self, text: str, progress=None):
         await asyncio.sleep(10)
         yield AudioChunk(data=b"late", mime_type="audio/wav", final=True)
 
@@ -96,7 +144,9 @@ def test_text_turn_marks_vad_events_text_only():
 
     events = asyncio.run(run_turn())
     vad_events = [
-        event for event in events if event["type"] in {"vad.speech_start", "vad.speech_end"}
+        event
+        for event in events
+        if event["type"] in {"vad.speech_start", "vad.speech_end"}
     ]
     assert len(vad_events) == 2
     assert all(event["payload"]["source"] == "text" for event in vad_events)
@@ -129,7 +179,9 @@ def test_continue_turn_extends_previous_assistant_message():
         queue = asyncio.Queue()
         bundle = mock_bundle()
         bundle.llm = RecordingLLM(tokens=[" more."])
-        pipeline = SpeechPipeline(bundle, QueueEventSink(queue), PipelineConfig(tts_chunk_chars=60))
+        pipeline = SpeechPipeline(
+            bundle, QueueEventSink(queue), PipelineConfig(tts_chunk_chars=60)
+        )
         pipeline.state.messages.append({"role": "assistant", "content": "Start"})
 
         await pipeline.handle_continue()
@@ -146,7 +198,9 @@ def test_tts_chunk_flushing_creates_multiple_audio_events():
         queue = asyncio.Queue()
         bundle = mock_bundle()
         bundle.llm = RecordingLLM(tokens=["One. ", "Two."])
-        pipeline = SpeechPipeline(bundle, QueueEventSink(queue), PipelineConfig(tts_chunk_chars=60))
+        pipeline = SpeechPipeline(
+            bundle, QueueEventSink(queue), PipelineConfig(tts_chunk_chars=60)
+        )
 
         await pipeline.handle_text_turn("hello")
         await asyncio.sleep(0.05)
@@ -165,7 +219,9 @@ def test_cancel_tts_cleans_stale_task_and_emits_cancelled():
         bundle = mock_bundle()
         bundle.llm = RecordingLLM(tokens=["slow speech."])
         bundle.tts = SlowTTS()
-        pipeline = SpeechPipeline(bundle, QueueEventSink(queue), PipelineConfig(tts_chunk_chars=60))
+        pipeline = SpeechPipeline(
+            bundle, QueueEventSink(queue), PipelineConfig(tts_chunk_chars=60)
+        )
 
         await pipeline.handle_text_turn("hello")
         await asyncio.sleep(0)
@@ -173,7 +229,9 @@ def test_cancel_tts_cleans_stale_task_and_emits_cancelled():
 
         await pipeline.cancel_tts("barge_in")
         await asyncio.sleep(0)
-        return pipeline.state.active_tts_tasks, [event["type"] for event in drain(queue)]
+        return pipeline.state.active_tts_tasks, [
+            event["type"] for event in drain(queue)
+        ]
 
     active_tasks, event_types = asyncio.run(run_turn())
 
@@ -228,3 +286,150 @@ def test_system_prompt_builder_receives_mode_prompt_and_messages():
 
     assert messages[0] == {"role": "system", "content": "built prompt"}
     assert messages[1] == {"role": "user", "content": "hello"}
+
+
+# ---------------------------------------------------------------------------
+# Phase 1.2: exception_payload and richer error events
+# ---------------------------------------------------------------------------
+
+
+def test_exception_payload_with_non_empty_message():
+    from converse_framework.pipeline import exception_payload
+
+    exc = ValueError("something broke")
+    result = exception_payload(exc, fallback="default")
+    assert result["message"] == "something broke"
+    assert result["error_type"] == "ValueError"
+
+
+def test_exception_payload_uses_fallback_for_empty_message():
+    from converse_framework.pipeline import exception_payload
+
+    exc = AssertionError()
+    result = exception_payload(exc, fallback="ASR provider failed with AssertionError.")
+    assert result["message"] == "ASR provider failed with AssertionError."
+    assert result["error_type"] == "AssertionError"
+
+
+def test_exception_payload_includes_repr():
+    from converse_framework.pipeline import exception_payload
+
+    exc = RuntimeError()
+    result = exception_payload(exc, fallback="TTS provider failed with RuntimeError.")
+    assert result["message"] == "TTS provider failed with RuntimeError."
+    assert result["error_type"] == "RuntimeError"
+    assert "repr" in result
+
+
+class FailingASR:
+    """ASR provider that always raises AssertionError()."""
+
+    @property
+    def status(self) -> ProviderStatus:
+        return ProviderStatus(
+            name="failing-asr",
+            kind="asr",
+            ready=False,
+            message="Failing ASR for tests.",
+            capabilities=ProviderCapabilities(),
+        )
+
+    async def check_status(self) -> ProviderStatus:
+        return self.status
+
+    async def probe_status(self) -> ProviderStatus:
+        return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        return self.status
+
+    async def load(self) -> ProviderStatus:
+        return self.status
+
+    async def unload(self) -> ProviderStatus:
+        return self.status
+
+    async def transcribe_text_input(self, text: str):
+        raise AssertionError()
+        yield  # type: ignore[unreachable]  # noqa
+
+    async def transcribe_audio(self, pcm_s16le: bytes, sample_rate: int, progress=None):
+        raise AssertionError()
+        yield  # type: ignore[unreachable]  # noqa
+
+
+class FailingTTS:
+    """TTS provider that always raises RuntimeError()."""
+
+    @property
+    def status(self) -> ProviderStatus:
+        return ProviderStatus(
+            name="failing-tts",
+            kind="tts",
+            ready=False,
+            message="Failing TTS for tests.",
+            capabilities=ProviderCapabilities(),
+        )
+
+    async def check_status(self) -> ProviderStatus:
+        return self.status
+
+    async def probe_status(self) -> ProviderStatus:
+        return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        return self.status
+
+    async def load(self) -> ProviderStatus:
+        return self.status
+
+    async def unload(self) -> ProviderStatus:
+        return self.status
+
+    async def stream_audio(self, text: str):
+        raise RuntimeError()
+        yield  # type: ignore[unreachable]  # noqa
+
+    async def stream_audio_with_progress(self, text: str, progress=None):
+        raise RuntimeError()
+        yield  # type: ignore[unreachable]  # noqa
+
+
+def test_audio_turn_asr_error_includes_message_and_error_type():
+    async def run_turn():
+        queue = asyncio.Queue()
+        bundle = mock_bundle()
+        bundle.asr = FailingASR()
+        pipeline = SpeechPipeline(bundle, QueueEventSink(queue), PipelineConfig())
+
+        await pipeline.handle_audio_turn(b"\x00\x00" * 1600, 16000)
+        await asyncio.sleep(0.05)
+        return drain(queue)
+
+    events = asyncio.run(run_turn())
+    asr_errors = [e for e in events if e["type"] == "asr.error"]
+    assert len(asr_errors) == 1
+    payload = asr_errors[0]["payload"]
+    assert payload["message"]  # non-empty
+    assert payload["error_type"] == "AssertionError"
+
+
+def test_text_turn_tts_error_includes_message_and_error_type():
+    async def run_turn():
+        queue = asyncio.Queue()
+        bundle = mock_bundle()
+        bundle.tts = FailingTTS()
+        pipeline = SpeechPipeline(
+            bundle, QueueEventSink(queue), PipelineConfig(tts_chunk_chars=60)
+        )
+
+        await pipeline.handle_text_turn("hello")
+        await asyncio.sleep(0.05)
+        return drain(queue)
+
+    events = asyncio.run(run_turn())
+    tts_errors = [e for e in events if e["type"] == "tts.error"]
+    assert len(tts_errors) >= 1
+    payload = tts_errors[0]["payload"]
+    assert payload["message"]  # non-empty
+    assert payload["error_type"] == "RuntimeError"

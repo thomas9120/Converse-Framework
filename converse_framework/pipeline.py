@@ -11,6 +11,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from converse_framework.events import EventSink
+from converse_framework.provider_events import (
+    provider_loaded_event,
+    provider_loading_event,
+)
 from converse_framework.registry import ProviderBundle
 
 logger = logging.getLogger(__name__)
@@ -165,7 +169,9 @@ class SpeechPipeline:
             latency_ms=elapsed_ms(started),
         )
         if not final_transcript:
-            await self.sink.emit("turn.finished", mode=turn_mode, reason="empty_transcript")
+            await self.sink.emit(
+                "turn.finished", mode=turn_mode, reason="empty_transcript"
+            )
             return
 
         await self._respond_to_transcript(
@@ -181,7 +187,9 @@ class SpeechPipeline:
         started = time.perf_counter()
         turn_id = self._next_turn_id(turn_state)
         await self.cancel_tts("new_audio_turn")
-        await self.sink.emit("turn.started", mode=turn_mode, source="audio", turn_id=turn_id)
+        await self.sink.emit(
+            "turn.started", mode=turn_mode, source="audio", turn_id=turn_id
+        )
         await self.sink.emit(
             "asr.started", mode=turn_mode, sample_rate=sample_rate, bytes=len(pcm_s16le)
         )
@@ -190,7 +198,36 @@ class SpeechPipeline:
         try:
 
             async def progress(event_type: str, payload: dict) -> None:
-                await self.sink.emit(event_type, **payload, latency_ms=elapsed_ms(started))
+                lat = elapsed_ms(started)
+                await self.sink.emit(event_type, **payload, latency_ms=lat)
+                # Emit provider lifecycle events alongside progress.
+                stage = payload.get("stage", "")
+                if event_type in ("asr.progress", "tts.progress"):
+                    kind = "asr" if event_type == "asr.progress" else "tts"
+                    provider_name = (
+                        self.providers.asr.status.name
+                        if event_type == "asr.progress"
+                        else self.providers.tts.status.name
+                    )
+                    msg = payload.get("message", "")
+                    if stage == "loading":
+                        await self.sink.emit(
+                            **provider_loading_event(
+                                kind=kind,
+                                provider=provider_name,
+                                message=msg,
+                            ),
+                            latency_ms=lat,
+                        )
+                    elif stage == "loaded":
+                        await self.sink.emit(
+                            **provider_loaded_event(
+                                kind=kind,
+                                provider=provider_name,
+                                message=msg,
+                                latency_ms=lat,
+                            ),
+                        )
 
             async for transcript in self.providers.asr.transcribe_audio(
                 pcm_s16le, sample_rate, progress
@@ -205,12 +242,23 @@ class SpeechPipeline:
                 if transcript.final:
                     final_transcript = transcript.text
         except Exception as exc:
-            await self.sink.emit("asr.error", message=str(exc), latency_ms=elapsed_ms(started))
+            lat = elapsed_ms(started)
+            payload = exception_payload(
+                exc, fallback=f"ASR provider failed with {type(exc).__name__}."
+            )
+            await self.sink.emit("asr.error", latency_ms=lat, **payload)
+            await self.sink.emit(
+                "provider.error",
+                kind="asr",
+                provider=self.providers.asr.status.name,
+                **payload,
+                latency_ms=lat,
+            )
             await self.sink.emit(
                 "turn.finished",
                 mode=turn_mode,
                 reason="asr_error",
-                latency_ms=elapsed_ms(started),
+                latency_ms=lat,
             )
             return
 
@@ -253,14 +301,30 @@ class SpeechPipeline:
             response_text = await self._stream_llm_and_tts(
                 prefix, started, turn_id, turn_state, turn_mode
             )
-            turn_state.messages[-1] = {"role": "assistant", "content": response_text.strip()}
-            await self.sink.emit("turn.finished", mode=turn_mode, latency_ms=elapsed_ms(started))
+            turn_state.messages[-1] = {
+                "role": "assistant",
+                "content": response_text.strip(),
+            }
+            await self.sink.emit(
+                "turn.finished", mode=turn_mode, latency_ms=elapsed_ms(started)
+            )
         except Exception as exc:
+            lat = elapsed_ms(started)
+            payload = exception_payload(
+                exc, fallback=f"LLM provider failed with {type(exc).__name__}."
+            )
             await self.sink.emit(
                 "turn.error",
                 mode=turn_mode,
-                message=str(exc),
-                latency_ms=elapsed_ms(started),
+                latency_ms=lat,
+                **payload,
+            )
+            await self.sink.emit(
+                "provider.error",
+                kind="llm",
+                provider=self.providers.llm.status.name,
+                **payload,
+                latency_ms=lat,
             )
 
     def messages_for_mode(self, mode: str) -> list[dict[str, str]]:
@@ -279,14 +343,29 @@ class SpeechPipeline:
             response_text = await self._stream_llm_and_tts(
                 "", started, turn_id, turn_state, turn_mode
             )
-            turn_state.messages.append({"role": "assistant", "content": response_text.strip()})
-            await self.sink.emit("turn.finished", mode=turn_mode, latency_ms=elapsed_ms(started))
+            turn_state.messages.append(
+                {"role": "assistant", "content": response_text.strip()}
+            )
+            await self.sink.emit(
+                "turn.finished", mode=turn_mode, latency_ms=elapsed_ms(started)
+            )
         except Exception as exc:
+            lat = elapsed_ms(started)
+            payload = exception_payload(
+                exc, fallback=f"LLM provider failed with {type(exc).__name__}."
+            )
             await self.sink.emit(
                 "turn.error",
                 mode=turn_mode,
-                message=str(exc),
-                latency_ms=elapsed_ms(started),
+                latency_ms=lat,
+                **payload,
+            )
+            await self.sink.emit(
+                "provider.error",
+                kind="llm",
+                provider=self.providers.llm.status.name,
+                **payload,
+                latency_ms=lat,
             )
 
     async def _stream_llm_and_tts(
@@ -372,7 +451,9 @@ class SpeechPipeline:
                     event_type, **payload, latency_ms=elapsed_ms(turn_started)
                 )
 
-            async for chunk in self.providers.tts.stream_audio_with_progress(text, progress):
+            async for chunk in self.providers.tts.stream_audio_with_progress(
+                text, progress
+            ):
                 chunk_index += 1
                 if not first_chunk_seen:
                     first_chunk_seen = True
@@ -404,15 +485,28 @@ class SpeechPipeline:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
+            lat = elapsed_ms(turn_started)
+            payload = exception_payload(
+                exc, fallback=f"TTS provider failed with {type(exc).__name__}."
+            )
             await self.sink.emit(
                 "tts.error",
                 mode=turn_mode,
-                message=str(exc),
-                latency_ms=elapsed_ms(turn_started),
+                latency_ms=lat,
                 text=text,
+                **payload,
+            )
+            await self.sink.emit(
+                "provider.error",
+                kind="tts",
+                provider=self.providers.tts.status.name,
+                **payload,
+                latency_ms=lat,
             )
 
-    def _llm_messages(self, turn_state: _TurnState, turn_mode: str) -> list[dict[str, str]]:
+    def _llm_messages(
+        self, turn_state: _TurnState, turn_mode: str
+    ) -> list[dict[str, str]]:
         prompt = self._effective_system_prompt(turn_state, turn_mode)
         if not prompt:
             return list(turn_state.messages)
@@ -449,6 +543,21 @@ class SpeechPipeline:
 
 def elapsed_ms(started: float) -> int:
     return int((time.perf_counter() - started) * 1000)
+
+
+def exception_payload(exc: Exception, *, fallback: str) -> dict[str, str]:
+    """Build a structured error dict with a guaranteed non-empty message.
+
+    Falls back to *fallback* when ``str(exc)`` is empty.
+    """
+    message = str(exc)
+    if not message:
+        message = fallback
+    return {
+        "message": message,
+        "error_type": type(exc).__name__,
+        "repr": repr(exc),
+    }
 
 
 def should_flush_tts(text: str, limit: int, minimum: int = 0) -> bool:

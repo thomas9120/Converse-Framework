@@ -49,12 +49,13 @@ class SileroVADProvider(VADProvider):
         ready = self._model is not None and self._load_error is None
         if self._load_error:
             message = f"Silero VAD failed to load: {self._load_error}"
+            status_level = "error"
         elif ready:
             message = "Silero VAD ONNX model loaded."
+            status_level = "ready"
         else:
-            message = (
-                "Silero VAD is configured and will load on first status check."
-            )
+            message = "Silero VAD is configured and will load on first status check."
+            status_level = "configured"
         return ProviderStatus(
             name="silero-vad",
             kind="vad",
@@ -62,9 +63,26 @@ class SileroVADProvider(VADProvider):
             message=message,
             capabilities=ProviderCapabilities(supports_barge_in=True),
             provider_id="silero",
+            loaded=ready,
+            status_level=status_level,
         )
 
     async def check_status(self) -> ProviderStatus:
+        """Legacy compat: probes and loads model."""
+        self._ensure_model()
+        return self.status
+
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap probe: check import availability, no model load."""
+        if self._model is None and self._load_error is None:
+            try:
+                import silero_vad  # type: ignore[import-not-found]  # noqa: F401
+            except Exception as exc:  # pragma: no cover - import path
+                self._load_error = str(exc)
+        return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        """May load heavy resources."""
         self._ensure_model()
         return self.status
 
@@ -111,8 +129,8 @@ class SileroVADProvider(VADProvider):
         if self._model is not None or self._load_error:
             return
         try:
-            from silero_vad import load_silero_vad  # type: ignore[import-not-found]
             import torch  # type: ignore[import-not-found]
+            from silero_vad import load_silero_vad  # type: ignore[import-not-found]
 
             self._torch = torch
             self._model = load_silero_vad(onnx=True)

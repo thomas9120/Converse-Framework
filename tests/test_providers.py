@@ -24,6 +24,7 @@ import asyncio
 import importlib
 import sys
 import types
+from typing import cast
 
 import pytest
 
@@ -33,6 +34,9 @@ from converse_framework.protocols import (
     TTSProvider,
     VADProvider,
 )
+from converse_framework.providers.pocket_tts import PocketTTSProvider  # noqa: F401
+from converse_framework.providers.llamacpp import LlamaCppProvider  # noqa: F401
+from converse_framework.providers.kokoro_onnx import KokoroOnnxProvider  # noqa: F401
 from converse_framework.providers.unavailable import (
     EXTRAS,
     EXTRA_HINTS,
@@ -44,7 +48,6 @@ from converse_framework.registry import (
     ProviderBundle,
     build_provider,
     build_provider_bundle,
-    is_provider_available,
     register_provider,
 )
 
@@ -99,6 +102,7 @@ def test_build_provider_with_fake_model_for_silero():
     installed, as long as a fake model is supplied via config. This mirrors
     the harness's test pattern of injecting ``_model``.
     """
+
     class FakeModel:
         def __call__(self, chunk, sample_rate):
             return 0.0
@@ -164,10 +168,13 @@ def test_build_provider_with_fake_model_for_pocket_tts():
 
 
 def test_pocket_tts_set_quantize_unloads_when_mode_changes():
-    provider = build_provider(
-        "tts",
-        "pocket-tts",
-        {"_model": object(), "_voice_state": object(), "quantize": False},
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "quantize": False},
+        ),
     )
 
     unchanged = provider.set_quantize(False)
@@ -212,16 +219,16 @@ def test_unknown_provider_returns_unavailable():
 
 
 def test_extra_hint_for_known_providers():
-    assert "converse-framework[silero]" == extra_hint_for("vad", "silero")
+    assert extra_hint_for("vad", "silero") == "converse-framework[silero]"
     assert "converse-framework[faster-whisper]" == extra_hint_for(
         "asr", "faster-whisper"
     )
     assert "converse-framework[llamacpp]" == extra_hint_for("llm", "llamacpp")
     assert "converse-framework[kokoro]" == extra_hint_for("tts", "kokoro")
     assert "converse-framework[kokoro]" == extra_hint_for("tts", "kokoro-onnx")
-    assert "converse-framework[pocket-tts]" == extra_hint_for("tts", "pocket-tts")
-    assert "silero" == missing_extra_for("vad", "silero")
-    assert "kokoro" == missing_extra_for("tts", "kokoro-onnx")
+    assert extra_hint_for("tts", "pocket-tts") == "converse-framework[pocket-tts]"
+    assert missing_extra_for("vad", "silero") == "silero"
+    assert missing_extra_for("tts", "kokoro-onnx") == "kokoro"
 
 
 def test_extra_hint_for_unknown_provider_is_none():
@@ -327,7 +334,9 @@ def test_llamacpp_sampler_provider_is_callable_driven():
     """The framework LlamaCppProvider must accept a sampler provider callable
     via :meth:`set_sampler_provider` and must NOT mention RuntimeSettings.
     """
-    provider = build_provider("llm", "llamacpp", {"base_url": "http://x:1"})
+    provider = cast(
+        LlamaCppProvider, build_provider("llm", "llamacpp", {"base_url": "http://x:1"})
+    )
 
     captured: dict = {}
 
@@ -342,7 +351,9 @@ def test_llamacpp_sampler_provider_is_callable_driven():
 
 
 def test_llamacpp_sampler_provider_can_be_cleared():
-    provider = build_provider("llm", "llamacpp", {"temperature": 0.7})
+    provider = cast(
+        LlamaCppProvider, build_provider("llm", "llamacpp", {"temperature": 0.7})
+    )
     provider.set_sampler_provider(lambda: {"temperature": 0.1})
     assert provider._build_sampler() == {"temperature": 0.1}
     provider.set_sampler_provider(None)
@@ -395,18 +406,24 @@ def test_kokoro_does_not_depend_on_project_root(monkeypatch, tmp_path):
     # No actual import of the harness PROJECT_ROOT.
     assert "from conversational_harness" not in source
     assert "import conversational_harness" not in source
-    assert "PROJECT_ROOT" not in source.replace(
-        "harness ``PROJECT_ROOT``", ""
-    )
+    assert "PROJECT_ROOT" not in source.replace("harness ``PROJECT_ROOT``", "")
 
     # When no cache_dir is given, the provider uses a platform default.
     # The CONVERSE_FRAMEWORK_CACHE_DIR env var lets us assert a value
     # without touching the user's real home directory.
     monkeypatch.setenv("CONVERSE_FRAMEWORK_CACHE_DIR", str(tmp_path))
-    provider = build_provider(
-        "tts",
-        "kokoro",
-        {"voice": "af_heart", "lang": "en-us", "_model": object(), "_g2p": object()},
+    provider = cast(
+        KokoroOnnxProvider,
+        build_provider(
+            "tts",
+            "kokoro",
+            {
+                "voice": "af_heart",
+                "lang": "en-us",
+                "_model": object(),
+                "_g2p": object(),
+            },
+        ),
     )
     assert provider.cache_dir == tmp_path / "kokoro"
 
@@ -417,7 +434,7 @@ def test_kokoro_does_not_depend_on_project_root(monkeypatch, tmp_path):
 
 
 def test_provider_bundle_check_statuses_runs_for_all_four():
-    async def run() -> None:
+    async def run():
         bundle = build_provider_bundle(
             {
                 "vad": {"provider": "mock"},
@@ -430,8 +447,9 @@ def test_provider_bundle_check_statuses_runs_for_all_four():
         return statuses
 
     statuses = asyncio.run(run())
-    assert len(statuses) == 4
-    for s in statuses:
+    assert statuses is not None
+    assert len(statuses) == 4  # type: ignore[arg-type]
+    for s in statuses:  # type: ignore[union-attr]
         assert s["ready"] is True
 
 
@@ -440,13 +458,109 @@ def test_provider_bundle_check_statuses_runs_for_all_four():
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Phase 1.1: Faster-whisper lazy-load on first transcribe
+# ---------------------------------------------------------------------------
+
+
+def test_faster_whisper_transcribe_calls_ensure_model_on_first_use():
+    """_transcribe_blocking calls _ensure_model() instead of assuming the
+    model was pre-loaded. A fake WhisperModel that records construction
+    proves the lazy load happens on the first transcribe call."""
+    from converse_framework.providers.faster_whisper import FasterWhisperASRProvider
+
+    constructed: list[dict] = []
+
+    class FakeWhisperModel:
+        def __init__(self, model_name, **kw):
+            constructed.append({"model_name": model_name, "kw": kw})
+
+        def transcribe(self, audio, **kw):
+            return iter(()), {}
+
+    fake_module = types.ModuleType("faster_whisper")
+    fake_module.WhisperModel = FakeWhisperModel  # type: ignore[assignment]
+    sys.modules["faster_whisper"] = fake_module
+
+    try:
+        provider = FasterWhisperASRProvider({"model": "tiny", "language": "en"})
+        assert provider._model is None
+
+        async def run():
+            events = []
+
+            async def progress(event_type, payload):
+                events.append((event_type, payload))
+
+            result = []
+            async for t in provider.transcribe_audio(
+                b"\x00\x00" * 1600, 16000, progress
+            ):
+                result.append(t)
+            return events
+
+        asyncio.run(run())
+    finally:
+        sys.modules.pop("faster_whisper", None)
+
+    assert len(constructed) == 1
+    assert constructed[0]["model_name"] == "tiny"
+
+
+def test_faster_whisper_injected_model_skips_load():
+    """If _model is already injected, _ensure_model() should be a no-op
+    and _transcribe_blocking should use the existing model directly."""
+    from converse_framework.providers.faster_whisper import FasterWhisperASRProvider
+
+    call_log: list[str] = []
+
+    class FakeModel:
+        def transcribe(self, audio, **kw):
+            call_log.append("transcribed")
+            return iter(()), {}
+
+    provider = FasterWhisperASRProvider(
+        {"model": "tiny", "language": "en", "_model": FakeModel()}
+    )
+    assert provider._model is not None
+
+    import numpy as np
+
+    loop = asyncio.new_event_loop()
+    result = provider._transcribe_blocking(np.zeros(1600, dtype=np.float32), None, loop)
+    loop.close()
+
+    assert call_log == ["transcribed"]
+    assert result == []  # no text segments from empty transcribe
+
+
+def test_faster_whisper_load_failure_sets_error_and_raises():
+    """When _ensure_model() fails, _load_error must be set and
+    _transcribe_blocking must raise RuntimeError with an actionable message."""
+    from converse_framework.providers.faster_whisper import FasterWhisperASRProvider
+
+    provider = FasterWhisperASRProvider({"model": "tiny", "language": "en"})
+    assert provider._model is None
+
+    import numpy as np
+
+    loop = asyncio.new_event_loop()
+    with pytest.raises(RuntimeError, match="faster-whisper model did not load"):
+        provider._transcribe_blocking(np.zeros(1600, dtype=np.float32), None, loop)
+    loop.close()
+
+    assert provider._load_error is not None
+
+
 def test_register_provider_rejects_unknown_kind():
     with pytest.raises(ValueError, match="Unknown provider kind"):
         register_provider("bogus", "x", "some.module:Class")
 
 
 def test_register_provider_overrides_existing():
-    register_provider("vad", "test-tmp", "converse_framework.providers.mock:MockVADProvider")
+    register_provider(
+        "vad", "test-tmp", "converse_framework.providers.mock:MockVADProvider"
+    )
     p = build_provider("vad", "test-tmp")
     assert isinstance(p, VADProvider)
     # Cleanup so other tests aren't surprised.

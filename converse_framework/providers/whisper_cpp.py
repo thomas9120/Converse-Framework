@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from converse_framework.audio_utils import (
     float_audio_to_wav_bytes,
@@ -60,9 +60,7 @@ class WhisperCppASRProvider(ASRProvider):
     """
 
     def __init__(self, config: dict):
-        self.base_url = str(
-            config.get("base_url", "http://127.0.0.1:8082")
-        ).rstrip("/")
+        self.base_url = str(config.get("base_url", "http://127.0.0.1:8082")).rstrip("/")
         self.model = str(config.get("model", "ggml-small.en.bin"))
         self.language = config.get("language", "en")
         self.temperature = config.get("temperature", 0)
@@ -76,6 +74,7 @@ class WhisperCppASRProvider(ASRProvider):
     def status(self) -> ProviderStatus:
         if self._last_error:
             message = self._last_error
+            status_level = "error"
         else:
             message = (
                 f"Configured for whisper-server at {self.base_url} "
@@ -83,6 +82,7 @@ class WhisperCppASRProvider(ASRProvider):
                 "The server is managed externally; the framework will not "
                 "start it for you."
             )
+            status_level = "configured"
         return ProviderStatus(
             name="whisper-cpp",
             kind="asr",
@@ -97,9 +97,29 @@ class WhisperCppASRProvider(ASRProvider):
             managed_externally=True,
             supports_model_management=False,
             supports_voice_selection=False,
+            active_model=self.model,
+            models=({"id": self.model, "label": self.model},),
+            status_level=status_level,
         )
 
     async def check_status(self) -> ProviderStatus:
+        return await self._http_check_status()
+
+    async def probe_status(self) -> ProviderStatus:
+        """Cheap probe: check httpx import; no HTTP call."""
+        try:
+            pass  # type: ignore[import-not-found]
+        except Exception as exc:  # pragma: no cover - import path
+            self._last_error = self._missing_dep_message(exc)
+            return self.status
+        # httpx available; return cached status.
+        return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        """Alias for probe_status - server lifecycle is user-owned."""
+        return await self.probe_status()
+
+    async def _http_check_status(self) -> ProviderStatus:
         """Probe the server by GETting ``{base_url}/health``.
 
         Returns a :class:`ProviderStatus` whose ``ready`` reflects
@@ -119,9 +139,7 @@ class WhisperCppASRProvider(ASRProvider):
                 response = await client.get(f"{self.base_url}/health")
                 response.raise_for_status()
         except Exception as exc:
-            self._last_error = (
-                f"Cannot reach whisper-server at {self.base_url}: {exc}"
-            )
+            self._last_error = f"Cannot reach whisper-server at {self.base_url}: {exc}"
             self._endpoint = None
             return self.status
 
@@ -159,9 +177,7 @@ class WhisperCppASRProvider(ASRProvider):
         """
         return await self.check_status()
 
-    async def transcribe_text_input(
-        self, text: str
-    ) -> AsyncIterator[TranscriptEvent]:
+    async def transcribe_text_input(self, text: str) -> AsyncIterator[TranscriptEvent]:
         stripped = text.strip()
         if stripped:
             yield TranscriptEvent(text=stripped, final=True)
@@ -223,9 +239,7 @@ class WhisperCppASRProvider(ASRProvider):
             form["response_format"] = "json"
             request_kwargs = {"data": form, "files": {"file": wav_bytes}}
 
-        timeout = httpx.Timeout(
-            connect=5.0, read=self.timeout_s, write=10.0, pool=5.0
-        )
+        timeout = httpx.Timeout(connect=5.0, read=self.timeout_s, write=10.0, pool=5.0)
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await asyncio.wait_for(
@@ -240,9 +254,7 @@ class WhisperCppASRProvider(ASRProvider):
             )
             raise RuntimeError(self._last_error) from exc
         except Exception as exc:
-            self._last_error = (
-                f"whisper-server request to {url} failed: {exc}"
-            )
+            self._last_error = f"whisper-server request to {url} failed: {exc}"
             raise RuntimeError(self._last_error) from exc
 
         text = self._extract_text(payload)

@@ -67,6 +67,12 @@ class _CountingProvider:
     async def check_status(self):
         return self.status
 
+    async def probe_status(self):
+        return self.status
+
+    async def load_status(self):
+        return await self.load()
+
     async def load(self):
         _LOAD_CALL_COUNTS[self.kind_name] += 1
         return self.status
@@ -77,9 +83,7 @@ class _CountingProvider:
     async def process_frame(self, frame) -> list[VADEvent]:
         return []
 
-    async def transcribe_text_input(
-        self, text: str
-    ) -> AsyncIterator[TranscriptEvent]:
+    async def transcribe_text_input(self, text: str) -> AsyncIterator[TranscriptEvent]:
         return
         yield  # pragma: no cover
 
@@ -166,7 +170,7 @@ def test_build_provider_mock_tts():
 
 def test_build_provider_passes_config():
     p = build_provider("llm", "mock", {"first_token_delay_ms": 42})
-    assert p.first_token_delay == 0.042
+    assert p.first_token_delay == 0.042  # type: ignore[attr-defined]
 
 
 def test_build_provider_unknown_returns_unavailable():
@@ -223,9 +227,9 @@ def test_build_provider_bundle_tts_provider_override():
     }
     # Build a separate mock TTS to inject
     override = build_provider("tts", "mock", {"first_chunk_delay_ms": 999})
-    bundle = build_provider_bundle(config, tts_provider=override)
+    bundle = build_provider_bundle(config, tts_provider=override)  # type: ignore[arg-type]
     assert bundle.tts is override
-    assert bundle.tts.first_chunk_delay == 0.999
+    assert bundle.tts.first_chunk_delay == 0.999  # type: ignore[attr-defined]
 
 
 def test_build_provider_bundle_audio_sample_rate_default():
@@ -238,7 +242,7 @@ def test_build_provider_bundle_audio_sample_rate_default():
     }
     bundle = build_provider_bundle(config)
     # VAD config should have sample_rate from audio section
-    assert bundle.vad.config.get("sample_rate") == 24000
+    assert bundle.vad.config.get("sample_rate") == 24000  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
@@ -377,3 +381,177 @@ def test_status_only_with_missing_extra_returns_unavailable(monkeypatch):
     assert "converse-framework[faster-whisper]" in asr_status["message"]
     assert asr_status["install_hint"] == "converse-framework[faster-whisper]"
     assert asr_status["missing_extra"] == "faster-whisper"
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: probe_statuses / load_statuses / new status fields
+# ---------------------------------------------------------------------------
+
+
+def test_provider_bundle_probe_statuses_does_not_call_load(monkeypatch):
+    """probe_statuses() must not call load() on any provider."""
+    from converse_framework import registry as registry_module
+
+    _reset_load_call_counts()
+
+    kind_to_class = {
+        "vad": "_CountingVAD",
+        "asr": "_CountingASR",
+        "llm": "_CountingLLM",
+        "tts": "_CountingTTS",
+    }
+    for kind, class_name in kind_to_class.items():
+        monkeypatch.setitem(
+            registry_module._registry,
+            kind,
+            {
+                "counting": registry_module._ProviderEntry(
+                    import_path=f"test_registry:{class_name}",
+                    availability_probe=None,
+                )
+            },
+        )
+
+    bundle = build_provider_bundle(
+        {
+            "vad": {"provider": "counting"},
+            "asr": {"provider": "counting"},
+            "llm": {"provider": "counting"},
+            "tts": {"provider": "counting"},
+        }
+    )
+
+    statuses = asyncio.run(bundle.probe_statuses())
+    assert len(statuses) == 4
+    for count in _LOAD_CALL_COUNTS.values():
+        assert count == 0
+
+
+def test_provider_bundle_load_statuses_calls_load():
+    """load_statuses() should trigger load() on providers that expose it."""
+    bundle = build_provider_bundle(
+        {
+            "vad": {"provider": "mock"},
+            "asr": {"provider": "mock"},
+            "llm": {"provider": "mock"},
+            "tts": {"provider": "mock"},
+        }
+    )
+
+    statuses = asyncio.run(bundle.load_statuses())
+    assert len(statuses) == 4
+    for s in statuses:
+        assert s["ready"] is True
+
+
+def test_serialized_status_includes_phase2_fields():
+    """Serialized status dict must include voices, models, status_level."""
+    from converse_framework.registry import _serialize_status
+
+    status = ProviderStatus(
+        name="test",
+        kind="vad",
+        ready=True,
+        message="test",
+        capabilities=ProviderCapabilities(),
+        voices=({"id": "v1", "label": "Voice 1"},),
+        active_voice="v1",
+        models=({"id": "m1", "label": "Model 1"},),
+        active_model="m1",
+        status_level="configured",
+    )
+    result = _serialize_status(status)
+    assert "voices" in result
+    assert "active_voice" in result
+    assert "models" in result
+    assert "active_model" in result
+    assert "status_level" in result
+    assert result["active_voice"] == "v1"
+    assert result["active_model"] == "m1"
+    assert result["status_level"] == "configured"
+    # voices/models are serialised as lists
+    assert isinstance(result["voices"], list)
+    assert len(result["voices"]) == 1
+
+
+def test_unavailable_provider_has_error_status_level():
+    """UnavailableProvider reports status_level='unavailable'."""
+    from converse_framework.providers.unavailable import UnavailableProvider
+
+    p = UnavailableProvider("asr", "nonexistent")
+    assert p.status.status_level == "unavailable"
+
+
+def test_faster_whisper_status_level_reflects_model_state():
+    """FasterWhisperASRProvider status_level changes with model state."""
+    from converse_framework.providers.faster_whisper import FasterWhisperASRProvider
+
+    provider = FasterWhisperASRProvider({"model": "tiny", "language": "en"})
+    # No model → configured
+    assert provider.status.status_level == "configured"
+
+    # With injected model → ready
+    provider = FasterWhisperASRProvider(
+        {
+            "model": "tiny",
+            "language": "en",
+            "_model": object(),
+        }
+    )
+    assert provider.status.status_level == "ready"
+
+    # With load error → error
+    provider._load_error = "simulated failure"
+    assert provider.status.status_level == "error"
+
+
+def test_pocket_tts_status_includes_voices_and_voice():
+    """PocketTTSProvider status includes voices and active_voice."""
+    from converse_framework.providers.pocket_tts import PocketTTSProvider
+
+    provider = PocketTTSProvider({"voice": "azelma"})
+    s = provider.status
+    assert s.active_voice == "azelma"
+    assert len(s.voices) > 0
+    # Should include azelma in the list
+    voice_ids = [v["id"] for v in s.voices]
+    assert "azelma" in voice_ids
+
+
+def test_kokoro_status_includes_active_voice():
+    """KokoroOnnxProvider status includes active_voice."""
+    from converse_framework.providers.kokoro_onnx import KokoroOnnxProvider
+
+    provider = KokoroOnnxProvider({"voice": "af_heart", "_model": object()})
+    s = provider.status
+    assert s.active_voice == "af_heart"
+
+
+def test_silero_status_level_reflects_model_state():
+    """SileroVADProvider status_level reflects whether model is loaded."""
+    from converse_framework.providers.silero import SileroVADProvider
+
+    provider = SileroVADProvider({})
+    assert provider.status.status_level == "configured"
+
+    # With error
+    provider._load_error = "failed"
+    assert provider.status.status_level == "error"
+
+
+def test_whisper_cpp_status_includes_active_model():
+    """WhisperCppASRProvider status includes active_model."""
+    from converse_framework.providers.whisper_cpp import WhisperCppASRProvider
+
+    provider = WhisperCppASRProvider({"model": "ggml-small.en.bin"})
+    s = provider.status
+    assert s.active_model == "ggml-small.en.bin"
+
+
+def test_llamacpp_status_level_is_configured_by_default():
+    """LlamaCppProvider status_level is 'configured' by default."""
+    from converse_framework.providers.llamacpp import LlamaCppProvider
+
+    provider = LlamaCppProvider({"base_url": "http://localhost:9999"})
+    s = provider.status
+    assert s.status_level == "configured"

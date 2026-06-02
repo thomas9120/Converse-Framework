@@ -144,13 +144,14 @@ def make_collector(
     utterances: list[tuple[bytes, int, str]] = []
     cancel_calls: list[str] = []
 
-    async def utterance_callback(
-        pcm: bytes, sample_rate: int, mode: str
-    ) -> None:
+    async def utterance_callback(pcm: bytes, sample_rate: int, mode: str) -> None:
         utterances.append((pcm, sample_rate, mode))
 
-    if cancel_callback is None:
-        async def cancel_callback(reason: str) -> None:
+    if cancel_callback is not None:
+        cancel_cb = cancel_callback
+    else:
+
+        async def cancel_cb(reason: str) -> None:
             cancel_calls.append(reason)
 
     vad = vad or FakeVADProvider()
@@ -159,7 +160,7 @@ def make_collector(
         event_sink=QueueEventSink(sink_queue),
         utterance_callback=utterance_callback,
         config=config,
-        cancel_callback=cancel_callback,
+        cancel_callback=cancel_cb,
         pre_speech_start_hook=pre_speech_start_hook,
     )
     return collector, sink_queue, utterances, cancel_calls
@@ -274,13 +275,9 @@ def test_speech_start_drains_pre_buffer_into_utterance():
             reject_utterance_rms=0,
             trim_silence_rms=0,
         )
-        collector, queue, utterances, _ = make_collector(
-            vad=vad, config=config
-        )
+        collector, queue, utterances, _ = make_collector(vad=vad, config=config)
         for seq in range(5):
-            await collector.ingest_frame(
-                make_frame(sequence=seq, samples=[2000] * 480)
-            )
+            await collector.ingest_frame(make_frame(sequence=seq, samples=[2000] * 480))
         return drain(queue), utterances
 
     events, utterances = asyncio.run(run())
@@ -311,13 +308,9 @@ def test_speech_end_dispatches_utterance_to_callback():
             reject_utterance_rms=0,
             trim_silence_rms=0,
         )
-        collector, queue, utterances, _ = make_collector(
-            vad=vad, config=config
-        )
+        collector, queue, utterances, _ = make_collector(vad=vad, config=config)
         for seq in range(2):
-            await collector.ingest_frame(
-                make_frame(sequence=seq, samples=[1500] * 480)
-            )
+            await collector.ingest_frame(make_frame(sequence=seq, samples=[1500] * 480))
         return drain(queue), utterances
 
     events, utterances = asyncio.run(run())
@@ -343,13 +336,9 @@ def test_min_duration_rejection_drops_short_utterance():
             ]
         )
         config = UtteranceCollectorConfig(min_speech_duration_ms=500)
-        collector, queue, utterances, _ = make_collector(
-            vad=vad, config=config
-        )
+        collector, queue, utterances, _ = make_collector(vad=vad, config=config)
         for seq in range(2):
-            await collector.ingest_frame(
-                make_frame(sequence=seq, samples=[2000] * 480)
-            )
+            await collector.ingest_frame(make_frame(sequence=seq, samples=[2000] * 480))
         return drain(queue), utterances
 
     events, utterances = asyncio.run(run())
@@ -376,13 +365,9 @@ def test_short_low_energy_rejection_emits_low_energy_reason():
             reject_low_energy_max_duration_ms=900,
             trim_silence_rms=0,
         )
-        collector, queue, utterances, _ = make_collector(
-            vad=vad, config=config
-        )
+        collector, queue, utterances, _ = make_collector(vad=vad, config=config)
         for seq in range(2):
-            await collector.ingest_frame(
-                make_frame(sequence=seq, samples=[10] * 480)
-            )
+            await collector.ingest_frame(make_frame(sequence=seq, samples=[10] * 480))
         return drain(queue), utterances
 
     events, utterances = asyncio.run(run())
@@ -408,13 +393,9 @@ def test_utterance_rms_rejection_emits_utterance_low_energy_reason():
             reject_utterance_rms=0.05,
             trim_silence_rms=0,
         )
-        collector, queue, utterances, _ = make_collector(
-            vad=vad, config=config
-        )
+        collector, queue, utterances, _ = make_collector(vad=vad, config=config)
         for seq in range(2):
-            await collector.ingest_frame(
-                make_frame(sequence=seq, samples=[200] * 480)
-            )
+            await collector.ingest_frame(make_frame(sequence=seq, samples=[200] * 480))
         return drain(queue), utterances
 
     events, utterances = asyncio.run(run())
@@ -443,9 +424,7 @@ def test_silence_trimming_emits_asr_audio_trimmed_event():
             trim_silence_rms=0.01,
             trim_silence_frame_ms=30,
         )
-        collector, queue, utterances, _ = make_collector(
-            vad=vad, config=config
-        )
+        collector, queue, utterances, _ = make_collector(vad=vad, config=config)
         await collector.ingest_frame(make_frame(sequence=0, samples=quiet))
         await collector.ingest_frame(make_frame(sequence=1, samples=loud))
         return drain(queue), utterances
@@ -478,9 +457,7 @@ def test_max_utterance_emits_buffer_warning_and_stops_recording():
         )
         collector, queue, _, _ = make_collector(vad=vad, config=config)
         for seq in range(3):
-            await collector.ingest_frame(
-                make_frame(sequence=seq, samples=[1000] * 480)
-            )
+            await collector.ingest_frame(make_frame(sequence=seq, samples=[1000] * 480))
         return drain(queue), collector.is_recording
 
     events, is_recording = asyncio.run(run())
@@ -496,9 +473,7 @@ def test_max_utterance_emits_buffer_warning_and_stops_recording():
 
 def test_vad_probability_forwarded_with_per_frame_mode():
     async def run():
-        vad = FakeVADProvider(
-            [[VADEvent("vad.probability", 0.42, 30)]]
-        )
+        vad = FakeVADProvider([[VADEvent("vad.probability", 0.42, 30)]])
         collector, queue, _, _ = make_collector(vad=vad)
         await collector.ingest_frame(make_frame(sequence=0), mode="custom")
         return drain(queue)
@@ -568,9 +543,7 @@ def test_instance_pre_speech_start_hook_fires_with_frame_and_mode():
             hook_calls.append((frame, mode))
 
         vad = FakeVADProvider([[VADEvent("vad.speech_start", 0.9, 30)]])
-        collector, _, _, _ = make_collector(
-            vad=vad, pre_speech_start_hook=hook
-        )
+        collector, _, _, _ = make_collector(vad=vad, pre_speech_start_hook=hook)
         await collector.ingest_frame(make_frame(sequence=0), mode="custom")
         return hook_calls
 
@@ -607,9 +580,7 @@ def test_per_frame_pre_speech_start_hook_overrides_instance():
             mode="first",
             pre_speech_start_hook=frame_hook,
         )
-        await collector.ingest_frame(
-            make_frame(sequence=1), mode="second"
-        )
+        await collector.ingest_frame(make_frame(sequence=1), mode="second")
         return instance_calls, frame_calls
 
     instance_calls, frame_calls = asyncio.run(run())
@@ -648,9 +619,7 @@ def test_cancel_active_turn_invokes_cancel_callback():
             cancel_reasons.append(reason)
 
         vad = FakeVADProvider()
-        collector, _, _, _ = make_collector(
-            vad=vad, cancel_callback=cancel
-        )
+        collector, _, _, _ = make_collector(vad=vad, cancel_callback=cancel)
         await collector.cancel_active_turn("manual")
         await collector.cancel_active_turn("barge_in")
         return cancel_reasons
@@ -676,12 +645,14 @@ def test_is_recording_and_current_mode_track_state():
         start_state = (collector.is_recording, collector.current_mode)
         await collector.ingest_frame(make_frame(sequence=0), mode="chat")
         mid_state = (collector.is_recording, collector.current_mode)
-        await collector.ingest_frame(
-            make_frame(sequence=1, samples=[1000] * 480)
-        )
-        return start_state, mid_state, (
-            collector.is_recording,
-            collector.current_mode,
+        await collector.ingest_frame(make_frame(sequence=1, samples=[1000] * 480))
+        return (
+            start_state,
+            mid_state,
+            (
+                collector.is_recording,
+                collector.current_mode,
+            ),
         )
 
     start, mid, end = asyncio.run(run())
@@ -720,13 +691,9 @@ def test_collector_uses_config_sample_rate_for_callback():
             reject_utterance_rms=0,
             trim_silence_rms=0,
         )
-        collector, _, utterances, _ = make_collector(
-            vad=vad, config=config
-        )
+        collector, _, utterances, _ = make_collector(vad=vad, config=config)
         for seq in range(2):
-            await collector.ingest_frame(
-                make_frame(sequence=seq, sample_rate=8000)
-            )
+            await collector.ingest_frame(make_frame(sequence=seq, sample_rate=8000))
         return utterances
 
     utterances = asyncio.run(run())
@@ -787,13 +754,9 @@ def test_zero_thresholds_pass_through():
             reject_utterance_rms=0,
             trim_silence_rms=0,
         )
-        collector, queue, utterances, _ = make_collector(
-            vad=vad, config=config
-        )
+        collector, queue, utterances, _ = make_collector(vad=vad, config=config)
         for seq in range(2):
-            await collector.ingest_frame(
-                make_frame(sequence=seq, samples=[0] * 480)
-            )
+            await collector.ingest_frame(make_frame(sequence=seq, samples=[0] * 480))
         return drain(queue), utterances
 
     events, utterances = asyncio.run(run())

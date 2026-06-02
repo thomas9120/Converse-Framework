@@ -21,6 +21,11 @@ from converse_framework.pipeline import (
     PipelineConfig,
     SpeechPipeline,
 )
+from converse_framework.provider_events import (
+    provider_error_event,
+    provider_loaded_event,
+    provider_loading_event,
+)
 from converse_framework.protocols import (
     ASRProvider,
     AudioChunk,
@@ -32,8 +37,7 @@ from converse_framework.protocols import (
     VADEvent,
     VADProvider,
 )
-from converse_framework.providers.unavailable import extra_hint_for
-from converse_framework.providers.unavailable import missing_extra_for
+from converse_framework.providers.unavailable import extra_hint_for, missing_extra_for
 from converse_framework.registry import (
     ProviderBundle,
     build_provider,
@@ -68,6 +72,9 @@ __all__ = [
     "ProviderCapabilities",
     "ProviderStatus",
     "PipelineConfig",
+    "provider_error_event",
+    "provider_loaded_event",
+    "provider_loading_event",
     "QueueEventSink",
     "QueueTransport",
     "SpeechPipeline",
