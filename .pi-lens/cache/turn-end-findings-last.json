@@ -1,6 +1,0 @@
-{
-  "signature": "Reference-Repository-Conversational-AI-Harness/app/conversational_harness/orchestrator.py::Unresolved from this turn — Reference-Repository-Conversational-AI-Harness/app/conversational_harness/orchestrator.py:\n🔴 STOP — 5 issue(s) must be fixed:\n  L101: \"CoroutineType[Any, Any, AsyncIterator[TranscriptEvent]]\" is not iterable\n    \"__aiter__\" method not defined\n  L143: \"CoroutineType[Any, Any, AsyncIterator[TranscriptEvent]]\" is not iterable\n    \"__aiter__\" method not defined\n  L240: \"CoroutineType[Any, Any, AsyncIterator[str]]\" is not iterable\n    \"__aiter__\" method not defined\n  L307: \"CoroutineType[Any, Any, AsyncIterator[AudioChunk]]\" is not iterable\n    \"__aiter__\" method not defined\n  \"CoroutineType[Any, Any, AsyncIterator[TranscriptEvent]]\" is not iterable\n    \"__aiter__\" method not defined",
-  "sessionId": "lens-mpulgjek-0ed4ea0d",
-  "projectSeqStart": 49,
-  "projectSeqEnd": 50
-}

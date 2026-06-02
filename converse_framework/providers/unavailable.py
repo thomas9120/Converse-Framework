@@ -29,7 +29,24 @@ EXTRA_HINTS: dict[tuple[str, str], str] = {
 
 
 def extra_hint_for(kind: str, name: str) -> str | None:
-    """Return the ``pip install`` extra hint for a missing provider, if known."""
+    """Return the ``pip install`` extra hint for a missing provider, if known.
+
+    Apps and the :class:`UnavailableProvider` sentinel use this to
+    build a friendly installation message when a registered
+    provider's heavy backend is not installed in the current
+    environment.
+
+    Args:
+        kind: Provider category (``"vad"``, ``"asr"``, ``"llm"``,
+            ``"tts"``).
+        name: Registered provider name (e.g. ``"silero"``,
+            ``"faster-whisper"``).
+
+    Returns:
+        The matching ``pip install`` extra string (e.g.
+        ``"converse-framework[silero]"``) when one is registered,
+        otherwise ``None``.
+    """
     return EXTRA_HINTS.get((kind, name))
 
 

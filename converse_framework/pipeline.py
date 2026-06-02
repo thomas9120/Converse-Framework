@@ -21,6 +21,30 @@ SamplerBuilder = Callable[[str], dict[str, Any]]
 
 @dataclass(frozen=True)
 class PipelineConfig:
+    """Top-level tunables for :class:`SpeechPipeline`.
+
+    The pipeline never reads from a config file or environment --
+    callers construct a :class:`ProviderBundle`, build a
+    :class:`PipelineConfig`, and hand them to the pipeline
+    directly. ``tts_chunk_chars`` and ``min_tts_chars`` can also be
+    changed at runtime via
+    :meth:`SpeechPipeline.update_turn_config`.
+
+    Attributes:
+        tts_chunk_chars: Soft character limit at which a buffered
+            LLM response is flushed to TTS. The chunker also
+            flushes on sentence-ending punctuation, so most
+            flushes will be smaller.
+        min_tts_chars: Hard lower bound for a TTS flush. Shorter
+            buffers are held back until a sentence boundary is
+            seen or ``tts_chunk_chars`` is reached. ``0`` disables
+            the lower bound.
+        default_mode: Conversation mode used when callers do not
+            pass an explicit ``mode=`` argument. The framework
+            treats modes as opaque string keys; ``"chat"`` is the
+            conventional default.
+    """
+
     tts_chunk_chars: int = 120
     min_tts_chars: int = 0
     default_mode: str = "chat"
@@ -36,6 +60,38 @@ class _TurnState:
 
 
 class SpeechPipeline:
+    """Turn orchestrator for a speech-to-speech conversation.
+
+    The pipeline is a single async object that owns the active
+    provider bundle, an :class:`EventSink` for outbound events, and
+    the per-mode conversation state (message history, active TTS
+    tasks, system prompt, turn id). It exposes three entry
+    points -- :meth:`handle_text_turn`, :meth:`handle_audio_turn`
+    and :meth:`handle_continue` -- and drives the ASR -> LLM -> TTS
+    flow internally.
+
+    The pipeline is the only place that knows about mode
+    switching, TTS cancellation, barge-in coordination, and the
+    chunking heuristics that decide when the LLM token stream is
+    handed off to TTS. App policy (UI, profile loading, memory,
+    sampler configuration) is supplied through the optional
+    ``system_prompt_builder`` and the registered
+    :class:`ProviderBundle` -- the framework never imports app
+    code.
+
+    Args:
+        providers: Active provider bundle (VAD, ASR, LLM, TTS).
+        sink: Event sink that receives every turn-related event.
+        config: Optional :class:`PipelineConfig`; defaults are
+            used if omitted.
+        system_prompt_builder: Optional callable with the signature
+            ``(mode, manual_prompt, messages) -> str`` that the
+            pipeline calls to compute the effective system prompt
+            for each turn. Apps use this to inject character / mode
+            / memory policy without leaking that policy into the
+            framework.
+    """
+
     def __init__(
         self,
         providers: ProviderBundle,

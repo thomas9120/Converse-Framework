@@ -546,35 +546,27 @@ Goal: stabilize the v0.1 API before publishing.
 
 Tasks:
 
-- Audit `__all__` and public docstrings.
-- Document the framework/app boundary clearly.
-- Add README examples:
+- [x] Audit `__all__` and public docstrings. — 21 real contract docstrings added at definition sites; `__all__` still 34 symbols.
+- [x] Document the framework/app boundary clearly. — kept the existing `## Framework / App Boundary` + `### Transport boundary` sections in README; cross-checked against `.harness/docs/standards.md`.
+- [x] Add README examples:
   - minimal mock text pipeline
   - audio frame -> utterance collector -> pipeline
   - custom provider registration
   - custom event sink
-- Document provider extras and missing dependency behavior.
-- Add migration notes for the harness.
-- Run performance comparison against the original harness path:
-  - first token latency
-  - first TTS chunk latency
-  - speech start to ASR start
-  - barge-in cancellation latency
-- Check package name availability before publishing.
-- Build and inspect package metadata:
-
-```powershell
-python -m build
-python -m twine check dist/*
-```
+  — all four under new `## Recipes` section, every code block validated against the base install.
+- [x] Document provider extras and missing dependency behavior. — `### Missing dependency behavior` subsection under `## Install`, wording matches `converse_framework/providers/unavailable.py` exactly.
+- [x] Add migration notes for the harness. — new top-level `MIGRATION.md` (325 lines, 10 `##` sections) walking the reference harness through adopting v0.1.
+- [x] Run performance comparison against the original harness path. — `benchmarks/perf_compare.py` (~340 lines, deterministic, mock-only) measures all four metrics. Apples-to-apples framework baseline only; real-provider comparison vs. the harness is intentionally a follow-up (mock-only scope documented in the script's docstring).
+- [x] Check package name availability before publishing. — `https://pypi.org/simple/converse-framework/` returns 404, name is available.
+- [x] Build and inspect package metadata. — `python -m build` produced `converse_framework-0.1.0.tar.gz` (745 KB) and `converse_framework-0.1.0-py3-none-any.whl` (51 KB); `python -m twine check dist/*` reports PASSED for both.
 
 Publish only after:
 
-- framework tests pass independently
-- harness tests pass against the framework package
-- browser text and mic flows pass manually
-- base import stays light
-- at least one non-harness consumer/example works
+- [x] framework tests pass independently — `python -m pytest -q` → 126 passed.
+- [x] harness tests pass against the framework package — `python -m pytest -q` in `Reference-Repository-Conversational-AI-Harness/` → 91 passed, 1 skipped.
+- [ ] browser text and mic flows pass manually — manual smoke check; not automatable in this plan.
+- [x] base import stays light — `python -c "import converse_framework; print(converse_framework.__all__)"` works with only `numpy` installed, 34 symbols.
+- [x] at least one non-harness consumer/example works — `python -m converse_framework.examples.text_chat` boots clean with mock providers.
 
 ## Testing Matrix
 

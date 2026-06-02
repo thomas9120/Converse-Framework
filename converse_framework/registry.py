@@ -127,6 +127,23 @@ def build_provider(
 
 @dataclass
 class ProviderBundle:
+    """The four providers a :class:`SpeechPipeline` needs to run a turn.
+
+    Bundles are usually produced by :func:`build_provider_bundle`
+    from a config mapping, but apps can construct them by hand
+    when they want to inject a provider that lives outside the
+    registry (e.g. a harness-managed TTS runtime). The framework
+    treats the four attributes as the canonical handles; the
+    pipeline never falls back to the registry at runtime, so a
+    bundle fully describes the providers a turn will use.
+
+    Attributes:
+        vad: VAD provider used by the utterance collector.
+        asr: ASR provider used for both audio and text input.
+        llm: LLM provider used to generate the assistant reply.
+        tts: TTS provider used to synthesise the assistant reply.
+    """
+
     vad: VADProvider
     asr: ASRProvider
     llm: LLMProvider
