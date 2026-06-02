@@ -9,6 +9,7 @@ parser's provider-override handling.
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
@@ -193,3 +194,112 @@ def test_format_event_for_cli_dispatches_per_event_type():
         {"type": "turn.error", "payload": {"message": "boom"}}
     )
     assert "boom" in formatted
+
+
+# ---------------------------------------------------------------------------
+# Subprocess-based ASR provider recipe
+# ---------------------------------------------------------------------------
+
+# Subprocess tests are skipped on platforms that block subprocess
+# creation. The default CI environment on Windows / Linux / macOS
+# supports it; the skip is only here for locked-down sandboxes.
+_skip_if_no_subprocess = pytest.mark.skipif(
+    not hasattr(asyncio, "create_subprocess_exec"),
+    reason="asyncio.create_subprocess_exec is unavailable on this platform",
+)
+
+
+@_skip_if_no_subprocess
+def test_subprocess_provider_class_round_trips_through_fake_echo(tmp_path):
+    """SubprocessASRProvider pipes a WAV through a fake echo binary.
+
+    The bundled FAKE_ECHO_SCRIPT writes its stdin to stdout, so the
+    provider should receive back exactly the WAV bytes that were
+    written to the subprocess. The test decodes the transcript as
+    UTF-8 to match the provider's contract and asserts the round-trip
+    is non-empty (the WAV header alone is several bytes).
+    """
+    from converse_framework.audio_utils import make_tone_wav
+    from converse_framework.examples.subprocess_provider import (
+        FAKE_ECHO_SCRIPT,
+        SubprocessASRProvider,
+    )
+
+    script_path = tmp_path / "fake_echo.py"
+    script_path.write_text(FAKE_ECHO_SCRIPT, encoding="utf-8")
+
+    tone_wav = make_tone_wav(frequency=440.0, duration_s=0.5, sample_rate=16000)
+    pcm_s16le = tone_wav[44:]  # drop the 44-byte WAV header
+
+    provider = SubprocessASRProvider(
+        {
+            "binary": sys.executable,
+            "command_template": [str(script_path)],
+            "model": "",
+        }
+    )
+
+    async def run():
+        await provider.load()
+        events = []
+        async for event in provider.transcribe_audio(pcm_s16le, sample_rate=16000):
+            events.append(event)
+        return events
+
+    events = asyncio.run(run())
+    assert len(events) == 1
+    assert events[0].final is True
+    # The fake echo writes stdin verbatim to stdout, so the transcript
+    # is the WAV-body bytes interpreted as UTF-8. The 16 kHz * 0.5 s
+    # tone yields 16_000 bytes of PCM, which is more than enough to
+    # assert the round-trip is non-empty.
+    assert len(events[0].text) > 0
+
+
+@_skip_if_no_subprocess
+def test_subprocess_provider_cli_with_fake_echo_exits_zero(tmp_path, capsys):
+    """The example's ``__main__`` runs end-to-end with the fake echo."""
+    import subprocess
+
+    from converse_framework.audio_utils import make_tone_wav
+
+    tone_path = tmp_path / "tone.wav"
+    tone_path.write_bytes(
+        make_tone_wav(frequency=440.0, duration_s=0.3, sample_rate=16000)
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "converse_framework.examples.subprocess_provider",
+            "--binary",
+            sys.executable,
+            "--use-fake-echo",
+            "--input",
+            str(tone_path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, (
+        f"example exited with {result.returncode}: {result.stderr}"
+    )
+    # The CLI prints either a transcript line or an explicit
+    # '(no transcript returned)' note. Both are valid smoke outcomes.
+    assert "transcript:" in result.stdout or "no transcript" in result.stdout
+
+
+@_skip_if_no_subprocess
+def test_subprocess_provider_status_reports_missing_binary():
+    """A binary that is not on PATH produces a friendly 'not ready' status."""
+    from converse_framework.examples.subprocess_provider import SubprocessASRProvider
+
+    provider = SubprocessASRProvider(
+        {"binary": "definitely-not-a-real-binary-xyz", "command_template": []}
+    )
+
+    status = provider.status
+    assert status.ready is False
+    assert "PATH" in status.message or "not" in status.message.lower()

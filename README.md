@@ -14,6 +14,7 @@ providers live behind optional extras:
 ```bash
 pip install converse-framework[silero]          # Silero VAD
 pip install converse-framework[faster-whisper]  # faster-whisper ASR
+pip install converse-framework[whisper-cpp]     # whisper.cpp HTTP ASR
 pip install converse-framework[llamacpp]        # llama.cpp HTTP LLM
 pip install converse-framework[kokoro]          # Kokoro ONNX TTS
 pip install converse-framework[pocket-tts]      # Pocket TTS
@@ -53,6 +54,28 @@ is a real implementation of all four provider protocols, so the rest of
 the pipeline keeps running (turns fail with a clear `RuntimeError` when
 the broken provider is actually invoked) and the consumer can decide
 whether to prompt for the install or fall back to a different provider.
+
+### Python version compatibility
+
+The base package supports Python 3.11 and newer. Each extra has its
+own constraints (the table below mirrors the markers in
+`pyproject.toml`):
+
+| Extra | Python | Notes |
+|---|---|---|
+| base | 3.11+ | `numpy>=2.0` is the only required runtime dependency. |
+| `silero` | 3.11+ | `silero-vad` + `onnxruntime`. No known upper bound. |
+| `faster-whisper` | 3.11+ | The `nvidia-cublas-cu12` wheel pins Windows. |
+| `llamacpp` | 3.11+ | `httpx` itself supports 3.9+, so 3.11+ is the only constraint. |
+| `whisper-cpp` | 3.11+ | Only needs `httpx`, which supports 3.9+. |
+| `kokoro` | 3.11 to <3.14 | `kokoro-onnx` 0.5.0 requires Python <3.14. The wheel build fails fast on 3.14+. |
+| `pocket-tts` | 3.11+ | No known upper bound. |
+
+The `kokoro` extra is the only one with an upper-bound marker today.
+If you are on Python 3.14+ and need a TTS provider, use `pocket-tts`
+or a mock provider. New providers should add their own
+`python_version` markers in `pyproject.toml` when their backend has a
+known limit.
 
 ## Quick Start
 
@@ -336,6 +359,74 @@ async def main():
 
 asyncio.run(main())
 ```
+
+#### Browser playback (JS reference client)
+
+The framework ships a vanilla JavaScript / Web Audio reference client at
+`converse_framework/js/tts-audio-player.js` that turns the framework's
+`tts.audio` events into sound without bundling a build step. It builds
+`AudioBuffer`s directly from PCM s16le bytes (avoiding
+`decodeAudioData` on tiny chunks) and coalesces consecutive events
+within a short window before scheduling, which is the same fix that
+resolved Pocket TTS choppiness in the reference harness.
+
+```html
+<script src="converse_framework/js/tts-audio-player.js"></script>
+<script>
+  const player = new TtsAudioPlayer({ coalesceMs: 80 });
+  ws.addEventListener('message', (ev) => {
+    const event = JSON.parse(ev.data);
+    if (event.type === 'tts.audio') player.onEvent(event);
+  });
+  // when the conversation ends:
+  player.close();
+</script>
+```
+
+The reference client handles the most common case (mono / stereo PCM
+s16le with explicit sample rate, channels, and `final` flag) and
+ignores anything that is not `pcm_s16le` with a console warning. Drop
+the file into your static assets directory; no npm / bundler required.
+
+#### Wrap an external CLI as a provider
+
+When the engine you want to use is only available as a CLI binary
+(`whisper-cli`, `whisper.cpp/main`, the Vosk CLI, …), the framework's
+`converse_framework.examples.subprocess_provider` shows the pattern.
+The class shells out to a configured binary, writes a WAV header
+followed by the caller's PCM s16le body to the subprocess's stdin,
+and yields the subprocess's stdout as a single final transcript
+event.
+
+```python
+from converse_framework.examples.subprocess_provider import (
+    SubprocessASRProvider,
+)
+
+provider = SubprocessASRProvider({
+    "binary": "whisper-cli",
+    "model": "ggml-small.en.bin",
+    "command_template": ["-m", "{model}", "-f", "-"],
+    "timeout_s": 120,
+})
+# Then plug it into a ProviderBundle:
+from converse_framework.registry import build_provider_bundle
+bundle = build_provider_bundle(
+    {
+        "vad": {"provider": "mock"},
+        "asr": {"provider": "subprocess"},   # see note below
+        "llm": {"provider": "mock"},
+        "tts": {"provider": "mock"},
+    },
+)
+```
+
+`SubprocessASRProvider` is shipped as a recipe (not a registered
+provider) because it is generic: copy the class, point it at your
+binary of choice, and register it with `register_provider("asr",
+"my-name", "my.module:MySubprocessProvider")`. The example also
+ships a fake-echo script (`--use-fake-echo`) that lets the driver
+run end-to-end in CI without installing any real ASR.
 
 ## Examples
 

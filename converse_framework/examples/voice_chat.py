@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import sys
 
 from converse_framework.audio_utils import AudioFrame, AudioFrameStats, parse_audio_frame
@@ -146,20 +147,27 @@ async def _drive_collector(
         # Skip the 44-byte WAV header. The example assumes a bare
         # PCM_s16le body; production code should use ``wave`` instead.
         handle.read(44)
+        sequence = 0
         while True:
             chunk = handle.read(expected_frame_bytes)
             if not chunk:
                 break
             frame = parse_audio_frame(
                 {
-                    "data": chunk.hex(),
+                    # The wire format is base64-encoded PCM bytes (see
+                    # ``parse_audio_frame``); encode the raw chunk so
+                    # the parser can decode it back to bytes.
+                    "data": base64.b64encode(chunk).decode("ascii"),
                     "sample_rate": config.sample_rate,
                     "channels": config.channels,
                     "frame_ms": config.frame_ms,
+                    "encoding": "pcm_s16le",
+                    "sequence": sequence,
                 },
                 stats,
             )
             await collector.ingest_frame(frame)
+            sequence += 1
 
 
 async def _main_async(args: argparse.Namespace) -> int:

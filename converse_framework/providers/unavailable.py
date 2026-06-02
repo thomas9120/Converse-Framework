@@ -21,6 +21,7 @@ from converse_framework.protocols import (
 EXTRA_HINTS: dict[tuple[str, str], str] = {
     ("vad", "silero"): "converse-framework[silero]",
     ("asr", "faster-whisper"): "converse-framework[faster-whisper]",
+    ("asr", "whisper-cpp"): "converse-framework[whisper-cpp]",
     ("llm", "llamacpp"): "converse-framework[llamacpp]",
     ("tts", "kokoro"): "converse-framework[kokoro]",
     ("tts", "kokoro-onnx"): "converse-framework[kokoro]",

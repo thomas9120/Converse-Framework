@@ -38,6 +38,7 @@ from converse_framework.registry import (
     build_provider_bundle,
     is_provider_available,
     register_provider,
+    status_only,
 )
 from converse_framework.transport import (
     QueueTransport,
@@ -85,6 +86,7 @@ __all__ = [
     "parse_audio_frame",
     "pcm_s16le_to_float32",
     "register_provider",
+    "status_only",
     "trim_pcm16_silence",
 ]
 

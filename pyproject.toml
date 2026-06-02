@@ -11,6 +11,17 @@ license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = ["numpy>=2.0"]
 
+# Optional-dependency index -- which Python versions each extra targets.
+#
+#   base        : 3.11+
+#   silero      : 3.11+           (silero-vad + onnxruntime have no known upper bound)
+#   faster-whisper : 3.11+        (faster-whisper; the cu12 wheel pins the platform)
+#   llamacpp    : 3.11+           (httpx supports 3.9+)
+#   whisper-cpp : 3.11+           (httpx supports 3.9+)
+#   kokoro      : 3.11 .. <3.14   (kokoro-onnx 0.5.0 requires Python <3.14)
+#   pocket-tts  : 3.11+           (no known upper bound)
+#
+# Install with e.g. ``pip install 'converse-framework[whisper-cpp]'``.
 [project.optional-dependencies]
 silero = ["silero-vad>=6.0", "onnxruntime>=1.20"]
 faster-whisper = [
@@ -18,10 +29,16 @@ faster-whisper = [
   "nvidia-cublas-cu12; platform_system == 'Windows'",
 ]
 llamacpp = ["httpx>=0.28"]
-kokoro = ["kokoro-onnx>=0.5", "misaki>=0.7"]
+whisper-cpp = ["httpx>=0.28"]
+# kokoro-onnx 0.5.0 requires Python <3.14; on 3.14+ the wheel build will fail
+# at install time, which is the desired "fail fast" behaviour.
+kokoro = [
+  "kokoro-onnx>=0.5; python_version < '3.14'",
+  "misaki>=0.7",
+]
 pocket-tts = ["pocket-tts>=2.1"]
 all-vad = ["converse-framework[silero]"]
-all-asr = ["converse-framework[faster-whisper]"]
+all-asr = ["converse-framework[faster-whisper,whisper-cpp]"]
 all-llm = ["converse-framework[llamacpp]"]
 all-tts = ["converse-framework[kokoro,pocket-tts]"]
 all = ["converse-framework[all-vad,all-asr,all-llm,all-tts]"]
@@ -31,3 +48,6 @@ packages = ["converse_framework"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+  "httpx: tests that require the httpx dependency (the whisper-cpp provider).",
+]

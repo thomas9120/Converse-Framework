@@ -208,6 +208,39 @@ def build_provider_bundle(
     )
 
 
+async def status_only(
+    config: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Report the runtime status of each provider without loading models.
+
+    Cheaper than :func:`build_provider_bundle` for diagnostics: the
+    returned list mirrors :meth:`ProviderBundle.statuses` in shape and
+    ordering (``vad``, ``asr``, ``llm``, ``tts``), but no provider's
+    ``load()`` is called and no full bundle is constructed. A provider
+    whose optional dependency is missing shows up via
+    :class:`UnavailableProvider` with the install hint in its
+    ``message``.
+
+    Args:
+        config: Nested provider configuration in the same shape
+            :func:`build_provider_bundle` accepts. Missing kinds fall
+            back to the ``"mock"`` provider.
+
+    Returns:
+        A list of four serialized status dicts (one per kind) in
+        ``[vad, asr, llm, tts]`` order. Each dict matches the shape
+        produced by :func:`_serialize_status` so callers can use the
+        result interchangeably with :meth:`ProviderBundle.statuses`.
+    """
+    statuses: list[ProviderStatus] = []
+    for kind in ("vad", "asr", "llm", "tts"):
+        kind_config = dict(config.get(kind, {}))
+        name = str(kind_config.get("provider", "mock"))
+        provider = build_provider(kind, name, kind_config)
+        statuses.append(await provider.check_status())
+    return _serialize_statuses(statuses)
+
+
 def _serialize_status(item: ProviderStatus) -> dict[str, Any]:
     return {
         "name": item.name,
@@ -254,6 +287,12 @@ register_provider(
     "faster-whisper",
     "converse_framework.providers.faster_whisper:FasterWhisperASRProvider",
     availability_probe=_probe_module("faster_whisper"),
+)
+register_provider(
+    "asr",
+    "whisper-cpp",
+    "converse_framework.providers.whisper_cpp:WhisperCppASRProvider",
+    availability_probe=_probe_module("httpx"),
 )
 register_provider(
     "llm",

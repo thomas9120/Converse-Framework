@@ -1,20 +1,125 @@
 """Tests for lazy provider registry and mock provider bundle."""
 
 import asyncio
+import sys
+from collections.abc import AsyncIterator
 
 from converse_framework.protocols import (
     ASRProvider,
+    AudioChunk,
     LLMProvider,
+    ProviderCapabilities,
+    ProviderStatus,
     TTSProvider,
+    TranscriptEvent,
+    VADEvent,
     VADProvider,
 )
 from converse_framework.registry import (
     ProviderBundle,
+    _serialize_status,
     build_provider,
     build_provider_bundle,
     is_provider_available,
     register_provider,
+    status_only,
 )
+
+
+# ---------------------------------------------------------------------------
+# Counting provider stubs (module-level so they can be looked up via the
+# registry's import-string mechanism). ``status_only`` must never call
+# ``load()`` on any provider; each subclass increments a shared counter
+# on load so the test can assert the count stays at zero.
+# ---------------------------------------------------------------------------
+
+_LOAD_CALL_COUNTS: dict[str, int] = {"vad": 0, "asr": 0, "llm": 0, "tts": 0}
+
+
+def _reset_load_call_counts() -> None:
+    for key in _LOAD_CALL_COUNTS:
+        _LOAD_CALL_COUNTS[key] = 0
+
+
+class _CountingProvider:
+    """Provider stub that tracks ``load()`` invocations per kind.
+
+    Only ``check_status`` is exercised by ``status_only``; the remaining
+    methods are present so the class is a complete protocol
+    implementation and can be instantiated via ``build_provider``.
+    """
+
+    kind_name: str = ""
+
+    def __init__(self, config):
+        self.config = config
+
+    @property
+    def status(self):
+        return ProviderStatus(
+            name=f"counting-{self.kind_name}",
+            kind=self.kind_name,
+            ready=True,
+            message="counting",
+            capabilities=ProviderCapabilities(),
+        )
+
+    async def check_status(self):
+        return self.status
+
+    async def load(self):
+        _LOAD_CALL_COUNTS[self.kind_name] += 1
+        return self.status
+
+    async def unload(self):
+        return self.status
+
+    async def process_frame(self, frame) -> list[VADEvent]:
+        return []
+
+    async def transcribe_text_input(
+        self, text: str
+    ) -> AsyncIterator[TranscriptEvent]:
+        return
+        yield  # pragma: no cover
+
+    async def transcribe_audio(
+        self, pcm_s16le: bytes, sample_rate: int, progress=None
+    ) -> AsyncIterator[TranscriptEvent]:
+        return
+        yield  # pragma: no cover
+
+    async def stream_response(
+        self, messages: list[dict[str, str]]
+    ) -> AsyncIterator[str]:
+        return
+        yield  # pragma: no cover
+
+    async def stream_audio(self, text: str) -> AsyncIterator[AudioChunk]:
+        return
+        yield  # pragma: no cover
+
+    async def stream_audio_with_progress(
+        self, text: str, progress=None
+    ) -> AsyncIterator[AudioChunk]:
+        return
+        yield  # pragma: no cover
+
+
+class _CountingVAD(_CountingProvider):
+    kind_name = "vad"
+
+
+class _CountingASR(_CountingProvider):
+    kind_name = "asr"
+
+
+class _CountingLLM(_CountingProvider):
+    kind_name = "llm"
+
+
+class _CountingTTS(_CountingProvider):
+    kind_name = "tts"
 
 
 # ---------------------------------------------------------------------------
@@ -174,3 +279,99 @@ def test_provider_bundle_check_statuses():
     assert len(statuses) == 4
     for s in statuses:
         assert s["ready"] is True
+
+
+# ---------------------------------------------------------------------------
+# status_only
+# ---------------------------------------------------------------------------
+
+
+def test_status_only_returns_four_entries_in_order():
+    config = {
+        "vad": {"provider": "mock"},
+        "asr": {"provider": "mock"},
+        "llm": {"provider": "mock"},
+        "tts": {"provider": "mock"},
+    }
+    statuses = asyncio.run(status_only(config))
+    assert len(statuses) == 4
+    assert [s["kind"] for s in statuses] == ["vad", "asr", "llm", "tts"]
+
+
+def test_status_only_serializes_using_existing_shape():
+    config = {
+        "vad": {"provider": "mock"},
+        "asr": {"provider": "mock"},
+        "llm": {"provider": "mock"},
+        "tts": {"provider": "mock"},
+    }
+    statuses = asyncio.run(status_only(config))
+    # Build the expected key set from the actual helper, so the test
+    # stays in sync with any future addition to _serialize_status.
+    sample = _serialize_status(
+        ProviderStatus(
+            name="sample",
+            kind="vad",
+            ready=True,
+            message="",
+            capabilities=ProviderCapabilities(),
+        )
+    )
+    expected_keys = set(sample.keys())
+    for status in statuses:
+        assert expected_keys.issubset(status.keys())
+
+
+def test_status_only_does_not_call_load(monkeypatch):
+    from converse_framework import registry as registry_module
+
+    _reset_load_call_counts()
+
+    # Replace each kind's registry entries with a single counting
+    # provider. monkeypatch restores the original entries at teardown
+    # so other tests are unaffected.
+    kind_to_class = {
+        "vad": "_CountingVAD",
+        "asr": "_CountingASR",
+        "llm": "_CountingLLM",
+        "tts": "_CountingTTS",
+    }
+    for kind, class_name in kind_to_class.items():
+        monkeypatch.setitem(
+            registry_module._registry,
+            kind,
+            {
+                "counting": registry_module._ProviderEntry(
+                    import_path=f"test_registry:{class_name}",
+                    availability_probe=None,
+                )
+            },
+        )
+
+    config = {
+        "vad": {"provider": "counting"},
+        "asr": {"provider": "counting"},
+        "llm": {"provider": "counting"},
+        "tts": {"provider": "counting"},
+    }
+    statuses = asyncio.run(status_only(config))
+
+    assert len(statuses) == 4
+    for count in _LOAD_CALL_COUNTS.values():
+        assert count == 0
+
+
+def test_status_only_with_missing_extra_returns_unavailable(monkeypatch):
+    # Make the framework's faster-whisper provider module unimportable
+    # so ``build_provider`` returns an ``UnavailableProvider`` sentinel
+    # whose status includes the install hint.
+    monkeypatch.setitem(
+        sys.modules, "converse_framework.providers.faster_whisper", None
+    )
+
+    config = {"asr": {"provider": "faster-whisper"}}
+    statuses = asyncio.run(status_only(config))
+
+    asr_status = next(s for s in statuses if s["kind"] == "asr")
+    assert asr_status["ready"] is False
+    assert "converse-framework[faster-whisper]" in asr_status["message"]
