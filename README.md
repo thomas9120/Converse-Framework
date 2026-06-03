@@ -3,7 +3,7 @@
 Provider-agnostic speech stack for speech-to-speech applications.
 
 ## Install
-Not published to PyPi yet, Pip install won't work. 
+
 ```bash
 pip install converse-framework
 ```
