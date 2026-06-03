@@ -15,6 +15,13 @@ The mock providers are used by default. Pass a provider config to
 :func:`build_websocket_voice_runtime` when embedding this recipe in a
 real app.
 
+.. seealso::
+
+   :class:`converse_framework.session.WebSocketSession` provides a
+   reusable message-dispatch loop that replaces the per-endpoint
+   routing in this recipe.  See the WebSocket Session Helper section
+   in the README.
+
 .. note::
 
    Mobile browser microphone access (``getUserMedia``) requires a

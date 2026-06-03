@@ -412,44 +412,44 @@ Implementation:
 - [x] Acceptance criteria met: doc explains why `http://<LAN-IP>` fails on mobile, includes both URL forms.
 - [x] Also added Browser Microphone Capture section documenting `mic-frame-sender.js`, `speaker-echo-guard.js`, and `browser-voice-client.js` alongside the mobile testing section.
 
-## Phase 9: Documentation and Migration Updates
+## Phase 9: Documentation and Migration Updates ✅
 
 Implementation:
 
-- Update `README.md`:
-  - Quick Start additions for provider status semantics.
-  - WebSocket session helper section.
-  - Browser microphone helper section.
-  - Runtime provider update recipe.
-  - Pocket TTS voice listing/configuration recipe.
-  - CUDA DLL helper section.
-  - Mobile HTTPS/tunnel recipe.
-- Update `MIGRATION.md`:
-  - Clarify that v0.1 apps can still own WebSocket handlers, but the framework now offers optional reusable session routing.
-  - Replace "TTS hot-swap UX stays entirely in app" with "settings UX stays in app; provider configure/reload mechanics are framework-supported."
-  - Mention `probe_status()` vs `load_status()`.
-- Update `converse_framework/examples/websocket_voice_chat.py` docstring to point to the new session helper.
-- Add docstrings for every new public class/method.
+- [x] **README.md updates:**
+  - [x] Quick Start: added "Provider status semantics" subsection with ``probe_status()`` / ``load_status()`` usage and ``status_level`` values.
+  - [x] WebSocket session helper section: added before Examples section documenting all 7 message types, ``WebSocketSessionConfig``, ``WebSocketSessionHooks``, and usage sketch.
+  - [x] Browser microphone helper section: done in Phase 8.
+  - [x] Runtime provider update section: done in Phase 3.
+  - [x] Pocket TTS voice listing/configuration recipe: added as recipe subsection with ``list_voices()``, ``configure(voice=...)``, ``configure(quantize=...)``, ``configure(max_tokens=...)`` examples.
+  - [x] CUDA DLL helper section: added as recipe subsection with ``add_nvidia_dll_directories()``, ``discover_nvidia_dll_dirs()``, ``format_nvidia_dll_diagnostic()``, and FasterWhisperASRProvider auto-discovery usage.
+  - [x] Mobile HTTPS/tunnel recipe: done in Phase 8.
+  - [x] Framework/App Boundary updated to list ``WebSocketSession``, browser JS helpers, CUDA utils, and v0.2 features.
+- [x] **MIGRATION.md updates:**
+  - [x] Added WebSocket session routing note under "Behavior the framework does NOT own" — apps can keep existing handlers or opt into ``WebSocketSession``.
+  - [x] "TTS hot-swap UX stays entirely in app" already replaced with "settings UX stays in app; provider configure/reload mechanics are framework-supported" (was done in Phase 3).
+  - [x] ``probe_status()`` vs ``load_status()`` section already present at end of file (was added during Phase 2).
+- [x] **Docstring updates:**
+  - [x] ``converse_framework/examples/websocket_voice_chat.py`` docstring updated with ``.. seealso::`` pointing to ``WebSocketSession``.
+  - [x] All public methods in ``cuda_utils.py``, ``session.py``, ``provider_events.py`` have docstrings. Inner callbacks in ``session.py`` (``utterance_callback``, ``cancel_callback``) are implementation details, not public API.
+- [x] **239 Python tests pass** (unchanged).
 
-## Phase 10: Compatibility and Release Strategy
+## Phase 10: Compatibility and Release Strategy ✅
 
 Backward compatibility:
 
-- Keep `check_status()` through at least the next minor version.
-- Keep `ProviderBundle.check_statuses()` as an alias for probe semantics.
-- Keep `build_websocket_voice_runtime()` and `handle_websocket_message()` as compatibility wrappers after introducing `WebSocketSession`.
-- Keep existing progress/error event types and add fields/events rather than replacing them.
-- Keep direct `PocketTTSProvider.set_quantize()` while adding `configure()` and `set_voice()`.
+- [x] `check_status()` kept through next minor version — present on all providers and `ProviderStatus` protocol.
+- [x] `ProviderBundle.check_statuses()` kept as alias for probe semantics.
+- [x] `build_websocket_voice_runtime()` and `handle_websocket_message()` kept as compatibility wrappers in the WebSocket example.
+- [x] Existing progress/error event types kept intact; fields and events added rather than replaced.
+- [x] `PocketTTSProvider.set_quantize()` kept alongside `configure()` and `set_voice()`.
 
 Versioning:
 
-- This is a minor pre-release feature set. If `ProviderStatus` shape changes are considered public API sensitive, bump to `0.2.0`.
-- Include a changelog entry summarizing:
-  - session helper,
-  - provider reload/configure/status APIs,
-  - browser mic helper,
-  - improved provider/error events,
-  - CUDA DLL helper.
+- [x] Version bumped from `0.1.0` to `0.2.0` in `pyproject.toml`.
+- [x] `CHANGELOG.md` created with full summary of all v0.2.0 features, breaking changes (ProviderStatus shape, set_quantize deprecation), migration notes, and what's next.
+- [x] **239 Python tests pass** (unchanged).
+- [x] **47 JS tests pass** (unchanged).
 
 ## Suggested Implementation Order
 

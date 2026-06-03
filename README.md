@@ -80,11 +80,7 @@ known limit.
 ## Quick Start
 
 ```python
-from converse_framework import (
-    build_provider_bundle,
-    QueueEventSink,
-)
-import asyncio
+from converse_framework import build_provider_bundle
 
 config = {
     "vad": {"provider": "mock"},
@@ -99,6 +95,39 @@ print(bundle.statuses())
 
 `import converse_framework` only needs `numpy` to be installed — heavy
 provider backends are loaded lazily through the registry.
+
+### Provider status semantics
+
+Every provider exposes a ``status`` property (cached state, no I/O), a
+lightweight ``probe_status()`` method (import checks, HTTP reachability
+— does **not** load models), and a ``load_status()`` method (may load
+or initialise heavy resources before returning).
+
+Call ``probe_status()`` to check readiness without side effects — it
+is safe for status screens and health checks:
+
+```python
+import asyncio
+
+# Probe without loading models
+results = asyncio.run(bundle.probe_statuses())
+for kind, status in results.items():
+    print(f"{kind}: ready={status.ready} level={status.status_level}")
+    if status.voices:
+        print(f"  voices={[v.id for v in status.voices]}")
+```
+
+Call ``load_status()`` when you need the definitive picture — it may
+trigger model downloads or initialise GPU resources:
+
+```python
+results = asyncio.run(bundle.load_statuses())
+```
+
+The ``status_level`` field distinguishes ``"ready"``, ``"configured"``,
+``"loading"``, ``"error"``, and ``"unavailable"``. The old
+``check_status()`` is kept for backward compatibility and behaves
+the same as ``probe_status()`` for providers that implement it.
 
 ## Recipes
 
@@ -546,6 +575,96 @@ binary of choice, and register it with `register_provider("asr",
 ships a fake-echo script (`--use-fake-echo`) that lets the driver
 run end-to-end in CI without installing any real ASR.
 
+#### Pocket TTS voice listing and configuration
+
+Pocket TTS supports listing available voices and changing voice or
+other options at runtime via :meth:`TTSProvider.configure` (introduced
+in protocol v0.2).  All variants return a :class:`ProviderConfigResult`
+with ``changed`` and ``requires_reload`` flags.
+
+List voices without importing the heavy ONNX backend:
+
+```python
+from converse_framework.providers.pocket_tts import PocketTTSProvider
+
+provider = PocketTTSProvider({"voice": "azelma"})
+voices = provider.list_voices()
+for v in voices:
+    print(f"{v.id}: {v.name} ({v.gender}, {v.language})")
+    # e.g. "azelma: Azelma (Female, en)"
+```
+
+Change voice (clears only the voice cache, preserves the loaded model):
+
+```python
+result = provider.configure(voice="galileo")
+print(result.changed, result.requires_reload)
+# True, False — model stays, voice state reloaded
+```
+
+Change quantization or temperature (clears both model and voice,
+requiring a full reload on next synthesis):
+
+```python
+result = provider.configure(quantize=True)
+print(result.requires_reload)
+# True — both _model and _voice_state cleared
+```
+
+Change ``max_tokens`` or ``coalesce_ms`` without unloading:
+
+```python
+result = provider.configure(max_tokens=250, coalesce_ms=120)
+print(result.requires_reload)
+# False — values stored, no cache invalidated
+```
+
+``ProviderBundle.replace()`` and ``pipeline.update_providers()``
+(see the Runtime Provider Updates section) work with any TTS
+provider including Pocket TTS.
+
+#### CUDA DLL helper (Windows)
+
+On Windows, NVIDIA wheel packages like ``nvidia-cublas-cu12`` install
+DLLs under ``site-packages/nvidia/<package>/bin/``, but C extension
+libraries such as CTranslate2 may not search those directories
+automatically.  The framework ships a CUDA DLL discovery helper at
+``converse_framework/cuda_utils.py`` that finds them and adds them to
+the DLL search path.
+
+```python
+from converse_framework.cuda_utils import (
+    add_nvidia_dll_directories,
+    discover_nvidia_dll_dirs,
+    format_nvidia_dll_diagnostic,
+)
+
+# Add all discovered NVIDIA DLL directories to the search path.
+# Keep the handles alive for the lifetime of the process.
+dll_handles = add_nvidia_dll_directories()
+
+# Print a diagnostic string for debugging:
+print(format_nvidia_dll_diagnostic())
+```
+
+The helper searches ``nvidia/cublas/bin``, ``nvidia/cudnn/bin``,
+``nvidia/cusparse/bin``, ``nvidia/cusolver/bin``, and
+``nvidia/curand/bin`` inside site-packages.  It is Windows-only
+(no-op on other platforms) and best-effort — failures are logged,
+not raised.
+
+``FasterWhisperASRProvider`` calls ``add_nvidia_dll_directories()``
+automatically inside ``_ensure_model()`` when the config option
+``auto_cuda_dll_dirs`` is ``True`` (the default).  Disable with:
+
+```python
+provider = FasterWhisperASRProvider({
+    "model": "large-v3-turbo",
+    "device": "cuda",
+    "auto_cuda_dll_dirs": False,  # disable auto-discovery
+})
+```
+
 ## Runtime Provider Updates
 
 The framework supports swapping providers at runtime without
@@ -660,11 +779,69 @@ if "vad" in updated:
 #    pipeline.update_providers().
 ```
 
-## Examples
+## WebSocket Session Helper
 
-The framework ships two opt-in example consumers. They live under
-`converse_framework/examples/` and are not imported by the framework
-package, so the base install stays light.
+The framework provides a reusable :class:`WebSocketSession` that
+handles the common message-dispatch loop for browser-based voice apps.
+It owns the transport, sink, provider bundle, pipeline, collector, and
+frame stats, and routes seven built-in message types without requiring
+the application to copy the recipe state machine.
+
+Built-in message types:
+
+* ``audio.frame`` — validated PCM frame forwarded to the utterance
+  collector.
+* ``text.turn`` — text conversation turn.
+* ``conversation.clear`` — clears per-mode conversation history.
+* ``tts.cancel`` — cancels in-flight TTS synthesis.
+* ``status.request`` — emits probe/check/load status (kind selected
+  by the ``probe`` / ``check`` / ``load`` flag in the payload).
+* ``settings.update`` — delegated to an optional
+  :class:`WebSocketSessionHooks` callback.
+* ``providers.reload`` — swaps the provider bundle and optionally
+  reloads the VAD provider, with ``before`` / ``after`` hooks.
+
+Unknown message types fall through to the optional
+``on_unknown_message`` hook or emit a ``turn.error`` event.
+
+Configuration and hooks are supplied via:
+
+* :class:`WebSocketSessionConfig` — provider config, collector config,
+  pipeline config, default mode, auto-probe on reload.
+* :class:`WebSocketSessionHooks` — optional async callbacks for
+  unknown messages, settings updates, status requests, provider reload
+  lifecycle, and event monitoring.
+
+The session class lives at ``converse_framework.session`` and is **not**
+imported from the top-level ``__init__.py`` to keep lightweight imports
+for apps that do not use it.
+
+Usage sketch:
+
+```python
+from converse_framework.session import (
+    WebSocketSession,
+    WebSocketSessionConfig,
+    WebSocketSessionHooks,
+)
+
+hooks = WebSocketSessionHooks(
+    on_settings_update=lambda cfg: print("settings updated", cfg),
+    on_event=lambda ev: print("event", ev.type),
+)
+session = WebSocketSession(
+    transport=your_transport,
+    config=WebSocketSessionConfig(
+        provider_config={"vad": {"provider": "mock"}, ...},
+    ),
+    hooks=hooks,
+)
+
+async for message in your_websocket:
+    await session.handle_message(message)
+```
+
+## Examples
 
 ### Text chat (automated-test covered)
 
@@ -716,6 +893,16 @@ The framework owns the **provider-agnostic speech stack**:
 * `AudioUtteranceCollector` (VAD-driven utterance collection).
 * A lazy provider registry and the optional concrete providers
   behind extras.
+* `WebSocketSession` (optional reusable message-dispatch loop).
+* Browser JS helpers (`mic-frame-sender.js`, `speaker-echo-guard.js`,
+  `browser-voice-client.js`, `tts-audio-player.js`).
+* CUDA DLL discovery helper (`cuda_utils`).
+
+As of v0.2 the framework also provides safe provider-swap mechanics
+(``ProviderBundle.replace()``, ``pipeline.update_providers()``,
+``collector.update_vad_provider()``), first-class provider
+configuration (``configure()``, ``list_voices()``), and lifecycle
+events (``provider.loading``, ``provider.loaded``, ``provider.error``).
 
 The framework does **not** own the application. The following stay in
 the consumer app (e.g. the reference harness):
@@ -724,7 +911,7 @@ the consumer app (e.g. the reference harness):
 * Profile files and runtime settings persistence.
 * Character card parsing and first-message seeding.
 * Companion mode policy and memory store.
-* TTS preset manager and provider hot-swap UX.
+* TTS preset manager and provider settings UX.
 * The WebSocket transport itself.
 
 ### Transport boundary

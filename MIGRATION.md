@@ -110,6 +110,16 @@ contract the app uses instead of baking the behavior in.
   implements the framework's `Transport` protocol. The reference
   harness exposes
   `conversational_harness.transport.WebSocketTransport`.
+
+  As of v0.2 the framework also offers an optional reusable
+  `WebSocketSession` (``converse_framework.session``) that owns
+  the message-dispatch loop for browser-based voice apps,
+  including provider reload, status requests, settings updates,
+  and event dispatch.  Apps that previously copied this loop
+  from the WebSocket recipe can switch to the session helper;
+  apps that already own their own handler can keep it unchanged.
+  The session class is **not** in the top-level
+  ``__init__.py`` — apps opt in via an explicit import.
 - **Profile file loading and layout.** The framework reads no
   profile files. Pass the relevant sections into
   `build_provider_bundle(config={...})` as a plain mapping.
