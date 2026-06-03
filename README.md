@@ -2,6 +2,38 @@
 
 Provider-agnostic speech stack for speech-to-speech applications.
 
+## Table of Contents
+
+- [Install](#install)
+  - [Missing dependency behavior](#missing-dependency-behavior)
+  - [Python version compatibility](#python-version-compatibility)
+- [Quick Start](#quick-start)
+  - [Provider status semantics](#provider-status-semantics)
+- [Recipes](#recipes)
+  - [Minimal mock text pipeline](#minimal-mock-text-pipeline)
+  - [Audio frame to utterance collector to pipeline](#audio-frame-to-utterance-collector-to-pipeline)
+  - [Custom provider registration](#custom-provider-registration)
+  - [Custom event sink](#custom-event-sink)
+  - [Browser playback](#browser-playback-js-reference-client)
+  - [Browser microphone capture](#browser-microphone-capture-js-reference-client)
+  - [Mobile browser microphone testing](#mobile-browser-microphone-testing)
+  - [Wrap an external CLI as a provider](#wrap-an-external-cli-as-a-provider)
+  - [Pocket TTS voice listing and configuration](#pocket-tts-voice-listing-and-configuration)
+  - [CUDA DLL helper](#cuda-dll-helper-windows)
+- [Runtime Provider Updates](#runtime-provider-updates)
+  - [ProviderBundle.replace()](#providerbundlereplace)
+  - [ProviderBundle.unload_replaced()](#providerbundleunload_replaced)
+  - [SpeechPipeline.update_providers()](#speechpipelineupdate_providers)
+  - [AudioUtteranceCollector.update_vad_provider()](#audioutterancecollectorupdate_vad_provider)
+  - [End-to-end pattern](#end-to-end-pattern)
+- [WebSocket Session Helper](#websocket-session-helper)
+- [Examples](#examples)
+  - [Text chat](#text-chat-automated-test-covered)
+  - [Voice chat](#voice-chat-manual)
+- [Framework / App Boundary](#framework--app-boundary)
+  - [Transport boundary](#transport-boundary)
+- [Status](#status)
+
 ## Install
 
 ```bash
