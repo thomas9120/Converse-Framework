@@ -182,6 +182,53 @@ class ProviderBundle:
         ]
         return _serialize_statuses(items)
 
+    def replace(
+        self, **providers: VADProvider | ASRProvider | LLMProvider | TTSProvider
+    ) -> ProviderBundle:
+        """Return a new bundle with the given providers swapped in.
+
+        Providers not specified are inherited from ``self``. This is a
+        no-copy, no-side-effect operation -- the caller is responsible
+        for calling :meth:`unload_replaced` if the old providers need
+        lifecycle cleanup.
+
+        Example::
+
+            bundle = bundle.replace(tts=new_tts)
+            await ProviderBundle.unload_replaced(old_bundle, bundle)
+        """
+        return ProviderBundle(
+            vad=providers.get("vad", self.vad),
+            asr=providers.get("asr", self.asr),
+            llm=providers.get("llm", self.llm),
+            tts=providers.get("tts", self.tts),
+        )
+
+    @staticmethod
+    async def unload_replaced(
+        old_bundle: ProviderBundle,
+        new_bundle: ProviderBundle,
+    ) -> list[dict[str, Any]]:
+        """Unload providers that were replaced between two bundles.
+
+        Compares each field of *old_bundle* and *new_bundle* by
+        identity. Providers that differ are unloaded. Providers that
+        remain the same reference are left untouched.
+
+        Returns:
+            Serialized status dicts for every provider that was
+            unloaded, in the order *vad*, *asr*, *llm*, *tts*.
+        """
+        statuses: list[ProviderStatus] = []
+        if old_bundle.vad is not new_bundle.vad:
+            statuses.append(await old_bundle.vad.unload())
+        if old_bundle.asr is not new_bundle.asr:
+            statuses.append(await old_bundle.asr.unload())
+        # LLMProvider does not expose unload()
+        if old_bundle.tts is not new_bundle.tts:
+            statuses.append(await old_bundle.tts.unload())
+        return _serialize_statuses(statuses)
+
 
 def build_provider_bundle(
     config: Mapping[str, Mapping[str, Any]],

@@ -117,6 +117,55 @@ class SpeechPipeline:
         self.tts_chunk_chars = tts_chunk_chars
         self.min_tts_chars = min_tts_chars
 
+    async def update_providers(
+        self,
+        providers: ProviderBundle,
+        *,
+        cancel_active_tts: bool = True,
+        reason: str = "provider_reload",
+    ) -> None:
+        """Swap the active provider bundle at runtime.
+
+        Cancels any active TTS synthesis by default so the next turn
+        picks up the new TTS provider. Does **not** clear
+        conversation history -- callers that want a fresh slate
+        should call :meth:`clear_conversation` separately.
+
+        Emits ``providers.updated`` with the serialized statuses of
+        the new provider bundle so downstream consumers (UI layers,
+        session helpers) can react.
+
+        Args:
+            providers: The new provider bundle to activate.
+            cancel_active_tts: If True (default), cancel any
+                in-flight TTS synthesis before swapping.
+            reason: Label emitted in the event payload for
+                diagnostic/debug use.
+        """
+        if cancel_active_tts:
+            # Clear TTS for all known modes without cancelling
+            # active recording -- that is the collector's job.
+            for state in self._states.values():
+                active = [t for t in state.active_tts_tasks if not t.done()]
+                for task in active:
+                    task.cancel()
+                if active:
+                    await asyncio.gather(*active, return_exceptions=True)
+                state.tts_tail = None
+
+        old_providers = self.providers
+        self.providers = providers
+
+        await self.sink.emit(
+            "providers.updated",
+            reason=reason,
+            statuses=self.providers.statuses(),
+        )
+
+        # Unload replaced providers in the background so the
+        # caller does not have to wait for heavyweight cleanup.
+        asyncio.ensure_future(ProviderBundle.unload_replaced(old_providers, providers))
+
     async def clear_conversation(self, mode: str = "chat") -> None:
         self._select_mode(mode)
         await self.cancel_tts("conversation_clear")

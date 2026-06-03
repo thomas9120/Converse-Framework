@@ -82,9 +82,7 @@ class UtteranceCollectorConfig:
     def to_dict(self) -> dict[str, int | float]:
         """Return only caller-configurable fields for persistence."""
         return {
-            item.name: getattr(self, item.name)
-            for item in fields(self)
-            if item.init
+            item.name: getattr(self, item.name) for item in fields(self) if item.init
         }
 
 
@@ -119,9 +117,7 @@ class AudioUtteranceCollector:
             expected_channels=self.config.channels,
             expected_frame_ms=self.config.frame_ms,
         )
-        self._pre_buffer: deque[bytes] = deque(
-            maxlen=self.config.pre_speech_frames
-        )
+        self._pre_buffer: deque[bytes] = deque(maxlen=self.config.pre_speech_frames)
         self._utterance_buffer = bytearray()
         self._recording = False
         self._recording_mode = "chat"
@@ -133,6 +129,22 @@ class AudioUtteranceCollector:
     @property
     def current_mode(self) -> str:
         return self._recording_mode
+
+    def update_vad_provider(self, vad_provider: VADProvider) -> None:
+        """Swap the VAD provider at runtime.
+
+        Rejected with :class:`RuntimeError` while an utterance is
+        being recorded to avoid corrupting the active utterance's
+        VAD state.
+
+        Args:
+            vad_provider: The new VAD provider to use for
+                subsequent :meth:`ingest_frame` calls.
+        """
+        if self._recording:
+            raise RuntimeError("cannot swap VAD provider while recording is active")
+        self._vad = vad_provider
+        self._pre_buffer.clear()
 
     def serialize_config(self) -> dict[str, int | float]:
         """Return the current collector configuration for app persistence."""
@@ -183,8 +195,7 @@ class AudioUtteranceCollector:
                 await self._sink.emit(
                     "asr.buffer_warning",
                     message=(
-                        "Maximum utterance length reached; closing current "
-                        "utterance."
+                        "Maximum utterance length reached; closing current utterance."
                     ),
                 )
                 self._recording = False
@@ -232,9 +243,7 @@ class AudioUtteranceCollector:
                     probability=vad_event.probability,
                     audio_ms=vad_event.audio_ms,
                 )
-                pcm = await self._apply_rejection_gates(
-                    pcm, mode=self._recording_mode
-                )
+                pcm = await self._apply_rejection_gates(pcm, mode=self._recording_mode)
                 if pcm:
                     await self._utterance_callback(
                         pcm, config.sample_rate, self._recording_mode

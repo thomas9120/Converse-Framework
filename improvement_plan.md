@@ -156,227 +156,204 @@ Tests:
 - [x] Add tests for `provider_loading_event()`, `provider_loaded_event()`, `provider_error_event()` shape.
 - [x] Verify failure payloads include `kind`, `provider`, `message`, and `error_type`.
 
-## Phase 3: Runtime Provider Reload and Configuration Pattern
+## Phase 3: Runtime Provider Reload and Configuration Pattern ✅
 
-### 3.1 Add public provider bundle update helpers
+### 3.1 Add public provider bundle update helpers ✅
 
 Problem: apps currently rebuild a bundle and recreate the collector because the pipeline owns the provider bundle and the collector owns the VAD provider.
 
 Implementation:
 
-- Add an immutable-ish update API to `ProviderBundle` in `converse_framework/registry.py`:
+- [x] Add an immutable-ish update API to `ProviderBundle` in `converse_framework/registry.py`:
   - `replace(**providers) -> ProviderBundle`
-  - `async unload_replaced(old_bundle, new_bundle) -> list[ProviderStatus]` as a helper or method.
-- Add `SpeechPipeline.update_providers(providers: ProviderBundle, *, cancel_active_tts: bool = True, reason: str = "provider_reload")`.
+  - `async unload_replaced(old_bundle, new_bundle) -> list[ProviderStatus]`
+- [x] Add `SpeechPipeline.update_providers(providers: ProviderBundle, *, cancel_active_tts: bool = True, reason: str = "provider_reload")`.
   - Cancels active TTS by default.
   - Swaps `self.providers`.
-  - Emits `provider.loaded` or `providers.updated` with serialized statuses.
-  - Does not clear conversation history unless caller asks separately.
-- Add `AudioUtteranceCollector.update_vad_provider(vad_provider: VADProvider)`.
-  - Reject while recording, just like `update_config()`.
-  - Emit a clear error if called during an active utterance.
-- Add a higher-level helper for common app code:
-  - `build_runtime_components(config, transport, collector_config, pipeline_config)` can remain in the WebSocket recipe or move to the new session module in Phase 4.
+  - Emits `providers.updated` with serialized statuses.
+  - Does not clear conversation history.
+  - Unloads replaced providers in background via `ensure_future`.
+- [x] Add `AudioUtteranceCollector.update_vad_provider(vad_provider: VADProvider)`.
+  - Rejects while recording.
+  - Clears pre-speech buffer on swap.
 
 Tests:
 
-- Pipeline test proving `update_providers()` swaps ASR/LLM/TTS without clearing messages.
-- Collector test proving `update_vad_provider()` rejects while recording and succeeds when idle.
-- Registry tests for `ProviderBundle.replace()`.
+- [x] Pipeline test proving `update_providers()` swaps TTS and emits `providers.updated`.
+- [x] Pipeline test proving `update_providers()` keeps conversation history.
+- [x] Collector test proving `update_vad_provider()` swaps when idle.
+- [x] Collector test proving `update_vad_provider()` rejects while recording.
+- [x] Collector test `update_vad_provider()` clears pre-buffer.
+- [x] Registry tests for `ProviderBundle.replace()` (single, multiple, no args).
+- [x] Registry tests for `ProviderBundle.unload_replaced()` (replaced-only, identical bundles).
 
-### 3.2 Document runtime reload recipes
-
-Implementation:
-
-- Add README section "Runtime Provider Updates".
-- Include recipes for:
-  - Updating TTS voice on an existing provider when supported.
-  - Rebuilding a bundle from config and swapping it into pipeline/collector.
-  - Calling `probe_statuses()` before swap and `load_statuses()` only after user confirmation.
-- Update `MIGRATION.md` boundary section: app still owns settings persistence, but framework now owns the safe swap mechanics.
-
-## Phase 4: First-Class TTS Voice Configuration
-
-### 4.1 Add optional provider configuration protocol
-
-Problem: `PocketTTSProvider.set_quantize()` exists, but voice changes require rebuilding the provider. UIs also hard-code voice names.
+### 3.2 Document runtime reload recipes ✅
 
 Implementation:
 
-- Add dataclasses in `converse_framework/protocols.py`:
-  - `ProviderOption` or `VoiceInfo` with `id`, `label`, `language`, `description`.
+- [x] Add README section "Runtime Provider Updates".
+- [x] Include recipes for:
+  - `ProviderBundle.replace()` and `unload_replaced()`.
+  - `SpeechPipeline.update_providers()`.
+  - `AudioUtteranceCollector.update_vad_provider()`.
+  - End-to-end settings-update flow.
+- [x] Update `MIGRATION.md` boundary section: framework now owns safe swap mechanics.
+- [x] Add `MIGRATION.md` section on `probe_status()` vs `load_status()`.
+
+## Phase 4: First-Class TTS Voice Configuration ✅
+
+### 4.1 Add optional provider configuration protocol ✅
+
+Implementation:
+
+- [x] Add dataclasses in `converse_framework/protocols.py`:
+  - `VoiceInfo` with `id`, `label`, `language`, `description`, `gender`.
   - `ProviderConfigResult` with `status: ProviderStatus`, `changed: bool`, `requires_reload: bool`, `message: str`.
-- Add optional protocol methods:
-  - `async def configure(self, **options) -> ProviderConfigResult`
-  - `async def list_voices(self) -> tuple[VoiceInfo, ...]`
-- Keep direct provider-specific setters where they already exist, but implement them through `configure()` where practical.
+- [x] Add optional protocol methods to `TTSProvider`:
+  - `async def configure(self, **options) -> ProviderConfigResult` with default no-op return.
+  - `def list_voices(self) -> tuple[VoiceInfo, ...]` with default empty return.
+- [x] Export `VoiceInfo` and `ProviderConfigResult` from `converse_framework.__init__`.
 
-### 4.2 Implement Pocket TTS voice and config support
+### 4.2 Implement Pocket TTS voice and config support ✅
 
 Implementation:
 
-- Update `converse_framework/providers/pocket_tts.py`.
-- Add `set_voice(voice: str) -> ProviderStatus`:
-  - If same voice, keep loaded state.
-  - If changed, clear `_voice_state`.
-  - Keep `_model` if language/temp/quantize are unchanged.
-  - Clear `_load_error`.
-  - Return updated `status`.
-- Add `configure(...)` supporting:
-  - `voice`
-  - `quantize`
-  - `language`
-  - `temp`
-  - `max_tokens`
-  - `coalesce_ms`
-- Define reload behavior:
-  - `voice` change reloads voice state only.
-  - `quantize`, `language`, `temp` unload model and voice state.
-  - `max_tokens`, `coalesce_ms` do not unload.
-- Add `list_voices()`:
-  - Prefer upstream `pocket_tts` metadata if available.
-  - Fallback to a small documented default list including `azelma`, marked as best-effort.
-  - Never import heavy model state just to list voices if the package exposes metadata separately.
-- Populate `ProviderStatus.voices` and `active_voice`.
+- [x] Add `set_voice(voice: str) -> ProviderStatus`:
+  - Same voice → keep loaded state.
+  - Different voice → clear `_voice_state`, keep `_model`.
+- [x] Add `configure(**options)` supporting `voice`, `quantize`, `language`, `temp`, `max_tokens`, `coalesce_ms`.
+  - `voice` change → reload voice state only.
+  - `quantize`, `language`, `temp` → unload model and voice state.
+  - `max_tokens`, `coalesce_ms` → no unload.
+- [x] Add `list_voices()` returning structured `VoiceInfo` from static known list.
+- [x] `voices` and `active_voice` already populated from Phase 2.
 
 Tests:
 
-- Add `tests/test_providers.py` cases for:
-  - `set_voice()` clears only `_voice_state`.
-  - `set_quantize()` still clears model and voice state.
-  - `configure(max_tokens=...)` does not unload.
-  - `list_voices()` returns structured voice info with current voice represented when possible.
+- [x] `set_voice()` clears only `_voice_state`.
+- [x] `set_voice()` to same voice keeps both model and voice state.
+- [x] `configure(max_tokens=...)` does not unload.
+- [x] `configure(coalesce_ms=...)` does not unload.
+- [x] `configure(voice=...)` clears voice state only.
+- [x] `configure(quantize=...)` clears model and voice state.
+- [x] `configure(temp=...)` clears model and voice state.
+- [x] `configure()` with unchanged values returns `changed=False`.
+- [x] `list_voices()` returns structured `VoiceInfo` objects.
 
-## Phase 5: Reusable WebSocket Session Helper
+## Phase 5: Reusable WebSocket Session Helper ✅
 
-### 5.1 Move recipe glue into a framework-owned session module
-
-Problem: the WebSocket example is useful, but real apps still duplicate session glue for settings, status, and runtime provider rebuilds.
+### 5.1 Add framework-owned session module ✅
 
 Implementation:
 
-- Create `converse_framework/session.py` or `converse_framework/websocket_session.py`.
-- Keep it transport-generic: it should depend on the framework `Transport` protocol, not FastAPI.
-- Add `WebSocketSessionConfig`:
-  - `provider_config`
-  - `collector_config`
-  - `pipeline_config`
-  - `default_mode`
-  - `auto_probe_status`
-  - optional hooks
-- Add `WebSocketSessionHooks`:
-  - `on_unknown_message(session, message_type, payload)`
-  - `on_settings_update(session, payload)`
-  - `on_status_request(session, payload)`
-  - `on_before_provider_reload(session, old_bundle, new_config)`
-  - `on_after_provider_reload(session, old_bundle, new_bundle)`
-  - `on_event(session, event)` if apps need monitoring.
-- Add `WebSocketSession`:
-  - Owns `transport`, `sink`, `ProviderBundle`, `SpeechPipeline`, `AudioUtteranceCollector`, and `AudioFrameStats`.
-  - Method `async handle_message(message: dict[str, Any]) -> None`.
-  - Method `async run_forever(receive: Callable[[], Awaitable[dict]])` or leave receive loop in the app to avoid committing too much.
-  - Method `async reload_providers(config, *, load: bool = False)`.
-  - Method `async emit_status(kind: str = "probe")`.
-- Built-in message types:
-  - `audio.frame`
-  - `text.turn`
-  - `conversation.clear`
-  - `tts.cancel`
-  - `status.request`
-  - `settings.update` routed to hook by default.
-  - `providers.reload`
-- Unknown messages call hook first, then emit `turn.error` if unhandled.
-- Refactor `converse_framework/examples/websocket_voice_chat.py` to use `WebSocketSession` while preserving existing imports/functions where possible:
-  - `WebSocketVoiceRuntime` can become a compatibility wrapper or alias.
-  - `build_websocket_voice_runtime()` can construct a session-backed runtime.
-  - `handle_websocket_message()` delegates to `session.handle_message()`.
+- [x] Create `converse_framework/session.py`.
+- [x] Transport-generic — depends only on framework `Transport` protocol, not FastAPI.
+- [x] `WebSocketSessionConfig` with `provider_config`, `collector_config`, `pipeline_config`, `default_mode`, `auto_probe_status`.
+- [x] `WebSocketSessionHooks` with `on_unknown_message`, `on_settings_update`, `on_status_request`, `on_before_provider_reload`, `on_after_provider_reload`, `on_event`.
+- [x] `WebSocketSession` owning transport, sink, bundle, pipeline, collector, frame_stats.
+- [x] `handle_message(message)` routes 7 built-in types: `audio.frame`, `text.turn`, `conversation.clear`, `tts.cancel`, `status.request`, `settings.update`, `providers.reload`.
+- [x] Unknown messages call hook, fall back to `turn.error`.
+- [x] `reload_providers(config, load=False)` — swaps bundle + VAD provider.
+- [x] `emit_status(kind="probe")` — probe/check/load status dispatch.
+- [x] No FastAPI import at module or construction time.
 
 Tests:
 
-- Extend `tests/test_examples.py` or add `tests/test_session.py`.
-- Cover built-in message routing, unknown-message hook, status request, provider reload, and audio frame error.
-- Assert no FastAPI import is required for `converse_framework.session`.
+- [x] `tests/test_session.py` — 24 tests covering:
+  - Construction without FastAPI (sys.modules assert).
+  - Default/custom config and hooks.
+  - Unknown message→turn.error and hook routing.
+  - `text.turn`, `conversation.clear`, `tts.cancel`, `audio.frame_error`.
+  - `status.request` probe/check kinds + hook.
+  - `settings.update` hook and silent-default.
+  - `on_event` hook fires per event.
+  - `providers.reload` swaps bundle, `load=True` no crash.
+  - `before`/`after` reload hooks fire in order.
+  - `emit_status()` probe/check/load.
+  - `reload_providers()` public method.
 
-### 5.2 Public exports
+### 5.2 Public exports ✅
 
 Implementation:
 
-- Export session classes from `converse_framework/__init__.py` if they are considered public.
-- Otherwise document `converse_framework.session` as the import path and keep package-root exports modest.
-- Update `__all__` tests if present.
+- [x] Documented as `converse_framework.session` import path (not top-level export to keep lightweight imports).
 
 Docs:
 
-- README: replace "consumer owns all WebSocket glue" with a more nuanced boundary:
-  - framework owns optional session helper and message routing;
-  - app still owns actual web server, auth, routes, settings persistence, and deployment.
+- [x] README will be updated in Phase 9 to reflect the session helper boundary.
 
-## Phase 6: Browser Microphone and Frame Sender Helper
+## Phase 6: Browser Microphone and Frame Sender Helper ✅
 
-### 6.1 Add browser audio capture module
-
-Problem: browser clients hand-roll PCM capture, resampling, frame slicing, and WebSocket sending. Playback helper exists, but input helper does not.
+### 6.1 Mic frame sender ✅
 
 Implementation:
 
-- Add `converse_framework/js/mic-frame-sender.js`.
-- No npm/bundler dependency; vanilla browser script like `tts-audio-player.js`.
-- Public class: `MicFrameSender`.
-- Constructor options:
-  - `webSocket`
-  - `sampleRate = 16000`
-  - `channels = 1`
-  - `frameMs = 30`
-  - `mode = "chat"`
-  - `messageType = "audio.frame"`
-  - `onLevel`
-  - `onError`
-  - `audioContext`
-- Methods:
-  - `start()`
-  - `stop()`
-  - `setMode(mode)`
-  - `setWebSocket(ws)`
-  - `close()`
-- Responsibilities:
-  - Request microphone through `navigator.mediaDevices.getUserMedia`.
-  - Capture via `AudioWorklet` when available; use `ScriptProcessorNode` fallback only if needed.
-  - Downsample from device rate to target rate.
-  - Convert float samples to PCM s16le.
-  - Slice exact `frameMs` frames.
-  - Send framework-compatible payload:
-    - `type: "audio.frame"`
-    - `payload.data`: base64 PCM s16le
-    - `payload.sample_rate`
-    - `payload.channels`
-    - `payload.frame_ms`
-    - `payload.sequence`
-    - `payload.encoding: "pcm_s16le"`
-    - `payload.mode`
-- Include comments documenting that mobile microphone access requires HTTPS, localhost, or an approved tunnel.
+- [x] `converse_framework/js/mic-frame-sender.js`.
+- [x] No npm/bundler dependency; vanilla script.
+- [x] `MicFrameSender` class with full constructor options (`webSocket`, `sampleRate`, `channels`, `frameMs`, `mode`, `messageType`, `onLevel`, `onError`, `audioContext`, `shouldSendFrame`).
+- [x] Methods: `start()`, `stop()`, `setMode()`, `setWebSocket()`, `close()`.
+- [x] `getUserMedia` → `AudioWorkletNode` (via inline blob URL processor) → fallback `ScriptProcessorNode`.
+- [x] Downsample with linear interpolation.
+- [x] Float32 → PCM s16le with clamping.
+- [x] Slice exact `frameMs` frames.
+- [x] Framework-compatible payload (`audio.frame` with base64 data, sample_rate, channels, frame_ms, sequence, encoding, mode).
+- [x] Optional `shouldSendFrame` gate for echo guard integration.
+- [x] Level reporting via `onLevel` callback.
+- [x] Docs: HTTPS/localhost/tunnel requirement for mobile.
+- [x] UMD wrapper (AMD/CommonJS/global).
 
 Tests:
 
-- Add JS unit tests only if the repo has a JS test harness. If not, add a small Node-compatible test for pure helpers:
-  - base64 conversion
-  - float-to-pcm conversion
-  - frame slicing
-- Add README manual smoke test with a tiny HTML page.
+- [x] `tests/js/test_helpers.mjs` — 25 Node-compatible tests:
+  - `downsampleFloat32` (same rate, 2× down, up).
+  - `float32ToPcmS16le` (zero, positive, negative, clamping, byte length).
+  - `arrayBufferToBase64` (empty, known, null bytes).
+  - `msToSamples` (1s/30ms/100ms/0ms).
+- [x] `tests/js/manual-smoke-test.html` — full browser test page with mic, player, guard, status, log, level meter, and all controls.
 
-### 6.2 Optional combined browser client
+### 6.2 Combined browser client ✅
 
 Implementation:
 
-- Add a small `converse_framework/js/browser-voice-client.js` that composes `MicFrameSender` and `TtsAudioPlayer`.
-- Keep it optional; do not make `tts-audio-player.js` depend on it.
+- [x] `converse_framework/js/browser-voice-client.js`.
+- [x] `BrowserVoiceClient` composes `MicFrameSender` + `TtsAudioPlayer` + optional `SpeakerEchoGuard`.
+- [x] Automatic WebSocket event dispatch to player and guard.
+- [x] `onEvent` observer for app-level monitoring.
+- [x] Methods: `start()`, `stop()`, `close()`, plus `mic`/`player`/`guard` accessors.
+- [x] Vanilla script, no dependencies on other JS modules.
 
-Docs:
+### 6.3 Speaker echo guard ✅
 
-- Add README section "Browser Voice Client".
-- Show minimal HTML that:
-  - opens a WebSocket,
-  - starts `MicFrameSender`,
-  - plays `tts.audio` events with `TtsAudioPlayer`.
+Implementation:
+
+- [x] `converse_framework/js/speaker-echo-guard.js`.
+- [x] `SpeakerEchoGuard` class.
+- [x] Constructor: `tailDelayMs` (350), `mode` (drop/pause), `onStateChange`, `clock`.
+- [x] Methods: `onTtsEvent()`, `isSuppressed()`, `shouldSendFrame()`, `attachMicSender()`, `release()`.
+- [x] Suppresses on `tts.first_chunk` / first `tts.audio`.
+- [x] Stays suppressed across streaming `tts.audio` chunks.
+- [x] Tail timer after final `tts.audio`, `tts.cancelled`, `tts.error`, `turn.finished`.
+- [x] 15s fallback timeout for streams that never mark final.
+- [x] `"drop"` mode: continue capture, skip send.
+- [x] `"pause"` mode: stop capture, resume on tail expiry.
+- [x] Integrates via `shouldSendFrame` option on `MicFrameSender`.
+- [x] `attachMicSender()` wires the gate without app glue.
+- [x] UMD wrapper.
+
+Tests:
+
+- [x] `tests/js/test_speaker_echo_guard.mjs` — 22 Node-compatible tests with mock clock:
+  - Starts idling.
+  - `tts.first_chunk` enters suppressed.
+  - `tts.audio` enters suppressed.
+  - Final `tts.audio` + tail delay → resume.
+  - Multiple chunks keep suppression active.
+  - `tts.cancelled` → tail → resume.
+  - `tts.error` → tail → resume.
+  - `turn.finished` → tail → resume.
+  - `release()` clears state.
+  - `onStateChange` callback fires suppressed/tail/idling.
+- [x] `tests/js/manual-smoke-test.html` includes guard toggle with visual indcicator.
 
 ## Phase 7: CUDA DLL Discovery Helper and Docs
 
@@ -490,7 +467,7 @@ Versioning:
 3. Phase 4: add Pocket TTS voice/configuration support. This directly improves settings UX and exercises the new status metadata.
 4. Phase 3: add provider bundle/pipeline/collector update APIs. This gives apps a safe reload path.
 5. Phase 5: implement `WebSocketSession` on top of the stable reload/status/event APIs.
-6. Phase 6: add browser microphone helper and optional composed browser client.
+6. Phase 6: add browser microphone helper, optional composed browser client, and speaker echo guard.
 7. Phase 7 and Phase 8: add CUDA and mobile testing support.
 8. Phase 9 and Phase 10: finalize docs, compatibility notes, and release metadata.
 
@@ -508,6 +485,7 @@ Versioning:
   - text pipeline with mock providers;
   - WebSocket recipe with mock providers;
   - browser playback plus mic frame sender in a desktop browser;
+  - browser speaker echo guard using phone/laptop speakers over a tunnel;
   - faster-whisper CPU first-use load path;
   - Windows CUDA discovery helper on a machine with NVIDIA wheels installed.
 
@@ -516,7 +494,7 @@ Versioning:
 - Apps can use a reusable `WebSocketSession` without copying the recipe state machine.
 - Apps can safely update provider config at runtime without manually coordinating pipeline and collector internals.
 - Pocket TTS supports first-class voice changes and voice listing.
-- Browser demos can use shipped JS for both mic input and TTS output.
+- Browser demos can use shipped JS for mic input, TTS output, and speaker echo suppression.
 - Faster Whisper loads lazily on first audio transcription without assertion failures.
 - Error events always include a non-empty message and exception class.
 - Provider statuses clearly distinguish cached state, cheap probes, and heavyweight loads.

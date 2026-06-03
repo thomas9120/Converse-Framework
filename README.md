@@ -428,6 +428,120 @@ binary of choice, and register it with `register_provider("asr",
 ships a fake-echo script (`--use-fake-echo`) that lets the driver
 run end-to-end in CI without installing any real ASR.
 
+## Runtime Provider Updates
+
+The framework supports swapping providers at runtime without
+recreating the pipeline or collector. This is useful for settings
+UIs that let users change TTS voice, VAD model, or ASR backend
+without restarting the conversation.
+
+### ProviderBundle.replace()
+
+:meth:`ProviderBundle.replace` creates a new bundle with specific
+providers swapped out by keyword argument, inheriting the rest
+from the original bundle. It is a no-side-effect, no-copy operation
+— the caller owns the lifecycle of the old providers.
+
+```python
+from converse_framework import build_provider_bundle, build_provider
+
+bundle = build_provider_bundle({
+    "vad": {"provider": "mock"},
+    "asr": {"provider": "mock"},
+    "llm": {"provider": "mock"},
+    "tts": {"provider": "mock"},
+})
+
+new_tts = build_provider("tts", "mock", {"first_chunk_delay_ms": 500})
+new_bundle = bundle.replace(tts=new_tts)
+# new_bundle.tts is the new provider; vad/asr/llm are unchanged.
+# bundle is unaffected.
+```
+
+Multiple providers can be replaced at once:
+
+```python
+replaced = bundle.replace(vad=new_vad, tts=new_tts)
+```
+
+### ProviderBundle.unload_replaced()
+
+:meth:`ProviderBundle.unload_replaced` compares two bundles by
+identity and calls ``unload()`` on every provider that differs.
+Providers with the same identity reference are left untouched.
+
+```python
+old_bundle = build_provider_bundle(config)
+new_bundle = old_bundle.replace(tts=new_tts)
+await ProviderBundle.unload_replaced(old_bundle, new_bundle)
+```
+
+### SpeechPipeline.update_providers()
+
+:meth:`SpeechPipeline.update_providers` is the safe way to swap
+providers on an active pipeline. It cancels in-flight TTS
+synthesis by default (so the next turn picks up the new
+provider), swaps the bundle, and emits a ``providers.updated``
+event with the serialized statuses of the new bundle.
+Conversation history is **not** cleared.
+
+```python
+from converse_framework import (
+    PipelineConfig, QueueEventSink, SpeechPipeline,
+    build_provider_bundle,
+)
+
+queue = asyncio.Queue()
+pipeline = SpeechPipeline(
+    providers=build_provider_bundle(initial_config),
+    sink=QueueEventSink(queue),
+    config=PipelineConfig(),
+)
+
+new_bundle = build_provider_bundle(updated_config)
+await pipeline.update_providers(new_bundle, reason="settings_change")
+# pipeline.providers is now new_bundle
+# TTS was cancelled if it was playing
+# providers.updated event was emitted
+```
+
+### AudioUtteranceCollector.update_vad_provider()
+
+:meth:`AudioUtteranceCollector.update_vad_provider` swaps the VAD
+provider that drives utterance boundary detection. It raises
+:class:`RuntimeError` if the collector is currently recording an
+utterance to avoid corrupting in-flight VAD state. The
+pre-speech buffer is cleared on swap so stale audio from the old
+VAD is not passed to the new one.
+
+```python
+new_vad = SileroVADProvider({"speech_threshold": 0.6})
+collector.update_vad_provider(new_vad)
+```
+
+### End-to-end pattern
+
+A typical settings-update flow combines all the pieces:
+
+```python
+# 1. Build the new bundle
+new_bundle = bundle.replace(tts=new_tts)
+
+# 2. Probe without loading models
+probe_results = await new_bundle.probe_statuses()
+
+# 3. On user confirmation, swap in the pipeline
+await pipeline.update_providers(new_bundle)
+
+# 4. Swap the VAD in the collector (separate because the
+#    collector and pipeline are independent components)
+if "vad" in updated:
+    collector.update_vad_provider(new_bundle.vad)
+
+# 5. Old providers are unloaded in the background by
+#    pipeline.update_providers().
+```
+
 ## Examples
 
 The framework ships two opt-in example consumers. They live under

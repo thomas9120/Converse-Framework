@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Converse Framework — Browser Voice Smoke Test</title>
+    <style>
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        max-width: 640px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+        background: #f9fafb;
+        color: #1a1a2e;
+      }
+      h1 {
+        font-size: 1.4rem;
+        margin-bottom: 0.5rem;
+      }
+      p {
+        color: #555;
+        font-size: 0.9rem;
+        margin-top: 0;
+      }
+      .status {
+        padding: 0.5rem 0.75rem;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        margin: 1rem 0;
+        background: #e2e8f0;
+        color: #334155;
+      }
+      .status.connected {
+        background: #d1fae5;
+        color: #065f46;
+      }
+      .status.error {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .status.listening {
+        background: #dbeafe;
+        color: #1e40af;
+      }
+      .btn-row {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+        margin: 1rem 0;
+      }
+      button {
+        padding: 0.5rem 1rem;
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #fff;
+        font-size: 0.9rem;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #f1f5f9;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+      button.primary {
+        background: #2563eb;
+        color: #fff;
+        border-color: #2563eb;
+      }
+      button.primary:hover {
+        background: #1d4ed8;
+      }
+      button.danger {
+        background: #dc2626;
+        color: #fff;
+        border-color: #dc2626;
+      }
+      button.danger:hover {
+        background: #b91c1c;
+      }
+      .log {
+        background: #1e293b;
+        color: #a5f3fc;
+        padding: 0.75rem;
+        border-radius: 6px;
+        font-family: "Menlo", "Consolas", monospace;
+        font-size: 0.8rem;
+        max-height: 300px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      .level-bar {
+        height: 6px;
+        border-radius: 3px;
+        background: #e2e8f0;
+        margin-top: 0.5rem;
+        overflow: hidden;
+      }
+      .level-bar-fill {
+        height: 100%;
+        width: 0%;
+        background: #2563eb;
+        transition: width 0.1s ease;
+      }
+      .guard-status {
+        font-size: 0.8rem;
+        color: #888;
+        margin-top: 0.25rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🎤 Browser Voice Client — Smoke Test</h1>
+    <p>
+      Tests <code>MicFrameSender</code>, <code>TtsAudioPlayer</code>,
+      <code>SpeakerEchoGuard</code>, and <code>BrowserVoiceClient</code>.
+    </p>
+
+    <!-- Status -->
+    <div id="status" class="status">⏸ Not connected</div>
+
+    <!-- Level meter -->
+    <div class="level-bar">
+      <div id="levelFill" class="level-bar-fill"></div>
+    </div>
+    <div id="guardStatus" class="guard-status">Guard: —</div>
+
+    <!-- Buttons -->
+    <div class="btn-row">
+      <button id="btnStart" class="primary">▶ Start mic + WS</button>
+      <button id="btnStop" class="danger" disabled>⏹ Stop</button>
+      <button id="btnCancel">✕ Cancel TTS</button>
+      <button id="btnClear">🗑 Clear conversation</button>
+    </div>
+    <div class="btn-row">
+      <button id="btnStatus">📊 Request status</button>
+      <button id="btnGuardToggle">🛡 Toggle echo guard</button>
+    </div>
+
+    <!-- Event log -->
+    <div id="log" class="log">Ready. Click "Start" to connect.\n</div>
+
+    <!-- Scripts -->
+    <script src="../../converse_framework/js/tts-audio-player.js"></script>
+    <script src="../../converse_framework/js/mic-frame-sender.js"></script>
+    <script src="../../converse_framework/js/speaker-echo-guard.js"></script>
+    <script src="../../converse_framework/js/browser-voice-client.js"></script>
+
+    <script>
+      (function () {
+        "use strict";
+
+        var WS_URL = "ws://localhost:8000/ws";
+        var ws = null;
+        var client = null;
+        var guardEnabled = true;
+
+        var $status = document.getElementById("status");
+        var $log = document.getElementById("log");
+        var $level = document.getElementById("levelFill");
+        var $guardStatus = document.getElementById("guardStatus");
+        var $btnStart = document.getElementById("btnStart");
+        var $btnStop = document.getElementById("btnStop");
+        var $btnCancel = document.getElementById("btnCancel");
+        var $btnClear = document.getElementById("btnClear");
+        var $btnStatus = document.getElementById("btnStatus");
+        var $btnGuardToggle = document.getElementById("btnGuardToggle");
+
+        // -----------------------------------------------------------------------
+        // Logging
+        // -----------------------------------------------------------------------
+
+        function log(msg) {
+          var line = "[" + new Date().toISOString().slice(11, 23) + "] " + msg;
+          $log.textContent = ($log.textContent || "") + line + "\n";
+          $log.scrollTop = $log.scrollHeight;
+        }
+
+        function setStatus(text, cls) {
+          $status.textContent = text;
+          $status.className = "status" + (cls ? " " + cls : "");
+        }
+
+        function setLevel(val) {
+          $level.style.width = Math.round(val * 100) + "%";
+        }
+
+        function updateGuardStatus() {
+          var state = "disabled";
+          var suppressed = false;
+          if (client && client.guard) {
+            state = guardEnabled ? "enabled" : "disabled";
+            suppressed = client.guard.isSuppressed();
+          }
+          $guardStatus.textContent =
+            "Guard: " +
+            state +
+            (suppressed ? " (🔇 suppressing mic)" : " (🎙 mic active)");
+        }
+
+        // -----------------------------------------------------------------------
+        // WebSocket
+        // -----------------------------------------------------------------------
+
+        function connect() {
+          if (ws) {
+            ws.close();
+            ws = null;
+          }
+
+          setStatus("⏳ Connecting to " + WS_URL);
+          log("Connecting to " + WS_URL + " …");
+
+          ws = new WebSocket(WS_URL);
+
+          ws.onopen = function () {
+            setStatus("✅ Connected to " + WS_URL, "connected");
+            log("WebSocket opened.");
+            startClient();
+          };
+
+          ws.onclose = function () {
+            setStatus("⏸ Disconnected", "");
+            log("WebSocket closed.");
+            if (client) {
+              client.stop();
+            }
+            $btnStart.disabled = false;
+            $btnStop.disabled = true;
+          };
+
+          ws.onerror = function (err) {
+            setStatus("❌ WebSocket error", "error");
+            log("WebSocket error: " + (err.message || err.type || "unknown"));
+          };
+        }
+
+        // -----------------------------------------------------------------------
+        // Client
+        // -----------------------------------------------------------------------
+
+        function startClient() {
+          if (!ws) return;
+
+          client = new BrowserVoiceClient({
+            webSocket: ws,
+            guardOptions: guardEnabled
+              ? { tailDelayMs: 350, mode: "drop" }
+              : null,
+            micOptions: {
+              sampleRate: 16000,
+              frameMs: 30,
+              onLevel: function (val) {
+                setLevel(val);
+              },
+              onError: function (err) {
+                log("Mic error: " + err.message);
+                setStatus("❌ Mic error: " + err.message, "error");
+              },
+            },
+            autoStart: true,
+            onEvent: function (msg) {
+              // Log interesting events
+              var type = msg.type || "?";
+              if (type === "turn.started") {
+                log("📝 " + type);
+                setStatus("🎤 Listening …", "listening");
+              } else if (
+                type === "turn.completed" ||
+                type === "turn.finished"
+              ) {
+                log("✅ " + type);
+                setStatus("✅ Turn complete", "connected");
+              } else if (type.indexOf("error") !== -1) {
+                log(
+                  "❌ " + type + " " + (msg.payload ? msg.payload.message : ""),
+                );
+              } else if (type === "providers.status") {
+                log(
+                  "📊 " +
+                    type +
+                    " (" +
+                    (msg.payload ? msg.payload.statuses.length : 0) +
+                    " providers)",
+                );
+              } else if (type === "conversation.cleared") {
+                log("🗑 " + type);
+              }
+            },
+          });
+
+          $btnStart.disabled = true;
+          $btnStop.disabled = false;
+          log("BrowserVoiceClient started.");
+          updateGuardStatus();
+        }
+
+        // -----------------------------------------------------------------------
+        // Manual commands
+        // -----------------------------------------------------------------------
+
+        function cancelTts() {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({
+                type: "tts.cancel",
+                payload: { reason: "user_stop" },
+              }),
+            );
+            log("Sent: tts.cancel");
+          }
+        }
+
+        function clearConversation() {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({ type: "conversation.clear", payload: {} }),
+            );
+            log("Sent: conversation.clear");
+          }
+        }
+
+        function requestStatus() {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(
+              JSON.stringify({
+                type: "status.request",
+                payload: { kind: "probe" },
+              }),
+            );
+            log("Sent: status.request (probe)");
+          }
+        }
+
+        function toggleGuard() {
+          guardEnabled = !guardEnabled;
+          $btnGuardToggle.textContent = guardEnabled
+            ? "🛡 Disable echo guard"
+            : "🛡 Enable echo guard";
+          log("Echo guard " + (guardEnabled ? "enabled" : "disabled") + ".");
+          // Recreate client to pick up new guard setting
+          if (client) {
+            client.close();
+          }
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            startClient();
+          }
+          updateGuardStatus();
+        }
+
+        // -----------------------------------------------------------------------
+        // Wire buttons
+        // -----------------------------------------------------------------------
+
+        $btnStart.onclick = function () {
+          connect();
+        };
+
+        $btnStop.onclick = function () {
+          if (client) {
+            client.close();
+            client = null;
+          }
+          if (ws) {
+            ws.close();
+            ws = null;
+          }
+          $btnStart.disabled = false;
+          $btnStop.disabled = true;
+          setStatus("⏸ Stopped", "");
+          log("Stopped.");
+        };
+
+        $btnCancel.onclick = cancelTts;
+        $btnClear.onclick = clearConversation;
+        $btnStatus.onclick = requestStatus;
+        $btnGuardToggle.onclick = toggleGuard;
+
+        log("Smoke test page loaded. Click 'Start' to begin.");
+        setStatus("⏸ Ready — click Start");
+      })();
+    </script>
+  </body>
+</html>

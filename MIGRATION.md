@@ -137,7 +137,13 @@ contract the app uses instead of baking the behavior in.
   The framework exposes `build_provider_bundle(..., tts_provider=...)`
   so the app can inject a harness-managed TTS instance instead
   of the registry-built one, and `provider.unload()` for the
-  lifecycle.
+  lifecycle. As of v0.2 the framework also provides safe swap
+  mechanics (`ProviderBundle.replace()`, `pipeline.update_providers()`,
+  `collector.update_vad_provider()`) — the app still owns the
+  settings UX that triggers the swap, but the low-level
+  coordination (cancelling in-flight TTS, emitting lifecycle
+  events, unloading old providers) is now handled by the
+  framework.
 - **`WebSocketTransport`**, **`config.py`**, **`runtime_settings.py`**, **`tts_runtime.py`**,
   character card parser, memory store, and doctor / start /
   install scripts all stay in the consumer. The framework never
@@ -291,6 +297,21 @@ and drop `-e .` from the consumer's `requirements.txt`), and the
 shims fall back to importing the consumer's own local modules. No
 data migration is involved — the rollback is purely an
 import-source change.
+
+## Probe vs Load Status
+
+As of v0.2, provider status has three tiers:
+
+- ``status`` (property): cached state, no I/O.
+- ``probe_status()``: cheap check (import probe, HTTP reachability)
+  that does not load models. Used by ``status_only()`` and
+  ``ProviderBundle.probe_statuses()``.
+- ``load_status()``: may load or initialize heavy resources before
+  returning the status. Used by ``ProviderBundle.load_statuses()``.
+
+The old ``check_status()`` is kept for backward compatibility.
+Callers that only need a quick readiness check should prefer
+``probe_status()``.
 
 ## Reference: from the harness
 

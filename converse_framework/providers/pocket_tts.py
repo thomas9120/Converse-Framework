@@ -18,8 +18,10 @@ from converse_framework.protocols import (
     AudioChunk,
     ProgressCallback,
     ProviderCapabilities,
+    ProviderConfigResult,
     ProviderStatus,
     TTSProvider,
+    VoiceInfo,
 )
 
 
@@ -277,6 +279,119 @@ class PocketTTSProvider(TTSProvider):
         if self._voice_state is None:
             assert self._model is not None
             self._voice_state = self._model.get_state_for_audio_prompt(self.voice)
+
+    def set_voice(self, voice: str) -> ProviderStatus:
+        """Change the active voice without reloading the full model.
+
+        Clears ``_voice_state`` (so the next synthesis reloads voice
+        state) but keeps ``_model`` when the language / temp / quantize
+        are unchanged.
+        """
+        with self._lock:
+            if self.voice == voice:
+                return self.status
+            self.voice = voice
+            # Clear only voice state — model stays loaded
+            self._voice_state = None
+            self._load_error = None
+            return self.status
+
+    async def configure(self, **options) -> ProviderConfigResult:
+        """Apply configuration changes.
+
+        Supported options:
+
+        * ``voice`` — changes voice, reloads voice state only.
+        * ``quantize`` — changes quantization, unloads model and voice.
+        * ``language`` — changes language, unloads model and voice.
+        * ``temp`` — changes temperature, unloads model and voice.
+        * ``max_tokens`` — changes max tokens, no unload.
+        * ``coalesce_ms`` — changes coalesce window, no unload.
+        """
+        changed = False
+        requires_reload = False
+        parts: list[str] = []
+
+        with self._lock:
+            if "voice" in options:
+                v = str(options["voice"])
+                if v != self.voice:
+                    self.voice = v
+                    self._voice_state = None
+                    changed = True
+                    requires_reload = True
+                    parts.append(f"voice={v}")
+
+            if "quantize" in options:
+                q = bool(options["quantize"])
+                if q != self.quantize:
+                    self.quantize = q
+                    self._model = None
+                    self._voice_state = None
+                    changed = True
+                    requires_reload = True
+                    parts.append(f"quantize={q}")
+
+            if "language" in options:
+                lang = options["language"]
+                if lang != self.language:
+                    self.language = lang
+                    self._model = None
+                    self._voice_state = None
+                    changed = True
+                    requires_reload = True
+                    parts.append(f"language={lang}")
+
+            if "temp" in options:
+                t = float(options["temp"])
+                if abs(t - self.temp) > 1e-6:
+                    self.temp = t
+                    self._model = None
+                    self._voice_state = None
+                    changed = True
+                    requires_reload = True
+                    parts.append(f"temp={t}")
+
+            if "max_tokens" in options:
+                m = int(options["max_tokens"])
+                if m != self.max_tokens:
+                    self.max_tokens = m
+                    changed = True
+                    parts.append(f"max_tokens={m}")
+
+            if "coalesce_ms" in options:
+                c = int(options["coalesce_ms"])
+                if c != self.coalesce_ms:
+                    self.coalesce_ms = c
+                    changed = True
+                    parts.append(f"coalesce_ms={c}")
+
+            self._load_error = None
+            message = ", ".join(parts) if parts else "no changes"
+
+        return ProviderConfigResult(
+            status=self.status,
+            changed=changed,
+            requires_reload=requires_reload,
+            message=message,
+        )
+
+    def list_voices(self) -> tuple[VoiceInfo, ...]:
+        """Return structured voice metadata.
+
+        Returns the known voice list without importing the heavy
+        ``pocket_tts`` backend.
+        """
+        return tuple(
+            VoiceInfo(
+                id=v["id"],
+                label=v["label"],
+                language=v.get("language", "en"),
+                description=v.get("description", ""),
+                gender=v.get("gender", "neutral"),
+            )
+            for v in self._known_voices
+        )
 
     def _emit_progress(
         self,

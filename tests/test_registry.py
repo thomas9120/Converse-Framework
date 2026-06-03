@@ -555,3 +555,69 @@ def test_llamacpp_status_level_is_configured_by_default():
     provider = LlamaCppProvider({"base_url": "http://localhost:9999"})
     s = provider.status
     assert s.status_level == "configured"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: ProviderBundle.replace / unload_replaced
+# ---------------------------------------------------------------------------
+
+
+def test_provider_bundle_replace_creates_new_bundle():
+    """replace() returns a new bundle with specified providers swapped."""
+    bundle = build_provider_bundle({})
+    original_vad = bundle.vad
+    original_tts = bundle.tts
+
+    # Replace TTS only
+    new_tts = build_provider("tts", "mock", {"first_chunk_delay_ms": 500})
+    replaced = bundle.replace(tts=new_tts)
+
+    assert replaced.tts is new_tts
+    assert replaced.vad is original_vad
+    assert replaced.asr is bundle.asr
+    assert replaced.llm is bundle.llm
+    # Original bundle unaffected
+    assert bundle.tts is original_tts
+
+
+def test_provider_bundle_replace_replaces_multiple_providers():
+    """replace() with multiple kwargs swaps all specified providers."""
+    bundle = build_provider_bundle({})
+    new_asr = build_provider("asr", "mock")
+    new_llm = build_provider("llm", "mock")
+
+    replaced = bundle.replace(asr=new_asr, llm=new_llm)
+    assert replaced.asr is new_asr
+    assert replaced.llm is new_llm
+    assert replaced.vad is bundle.vad
+    assert replaced.tts is bundle.tts
+
+
+def test_provider_bundle_replace_no_args_returns_copy():
+    """replace() with no args returns a bundle sharing the same providers."""
+    bundle = build_provider_bundle({})
+    same = bundle.replace()
+    assert same.vad is bundle.vad
+    assert same.asr is bundle.asr
+    assert same.llm is bundle.llm
+    assert same.tts is bundle.tts
+
+
+def test_provider_bundle_unload_replaced_unloads_replaced_providers():
+    """unload_replaced() calls unload on providers that differ by identity."""
+    bundle = build_provider_bundle({})
+    new_asr = build_provider("asr", "mock")
+    replaced = bundle.replace(asr=new_asr)
+
+    statuses = asyncio.run(ProviderBundle.unload_replaced(bundle, replaced))
+    # Only ASR was replaced so only one unload result expected
+    assert len(statuses) == 1
+    assert statuses[0]["name"] == bundle.asr.status.name
+
+
+def test_provider_bundle_unload_replaced_skips_identical_providers():
+    """unload_replaced() does nothing when bundles share same provider refs."""
+    bundle = build_provider_bundle({})
+    same = bundle.replace()
+    statuses = asyncio.run(ProviderBundle.unload_replaced(bundle, same))
+    assert len(statuses) == 0

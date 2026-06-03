@@ -7,7 +7,7 @@ from converse_framework.protocols import (
     ProviderCapabilities,
     ProviderStatus,
 )
-from converse_framework.registry import build_provider_bundle
+from converse_framework.registry import build_provider, build_provider_bundle
 
 
 class RecordingLLM:
@@ -433,3 +433,52 @@ def test_text_turn_tts_error_includes_message_and_error_type():
     payload = tts_errors[0]["payload"]
     assert payload["message"]  # non-empty
     assert payload["error_type"] == "RuntimeError"
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: update_providers
+# ---------------------------------------------------------------------------
+
+
+def test_update_providers_swaps_bundle_and_emits_event():
+    async def run():
+        queue = asyncio.Queue()
+        bundle = mock_bundle()
+        pipeline = SpeechPipeline(bundle, QueueEventSink(queue), PipelineConfig())
+
+        new_tts = build_provider("tts", "mock", {"first_chunk_delay_ms": 999})
+        new_bundle = bundle.replace(tts=new_tts)
+
+        await pipeline.update_providers(new_bundle, reason="test_swap")
+        await asyncio.sleep(0.05)
+        return pipeline.providers, drain(queue)
+
+    result, events = asyncio.run(run())
+    # bundle was swapped — TTS provider is the new one
+    assert result.tts.first_chunk_delay == 0.999
+
+    updated = [e for e in events if e["type"] == "providers.updated"]
+    assert len(updated) == 1
+    payload = updated[0]["payload"]
+    assert payload["reason"] == "test_swap"
+    assert len(payload["statuses"]) == 4
+
+
+def test_update_providers_keeps_conversation_history():
+    async def run():
+        queue = asyncio.Queue()
+        bundle = mock_bundle()
+        pipeline = SpeechPipeline(bundle, QueueEventSink(queue), PipelineConfig())
+
+        # Simulate some conversation history
+        pipeline.state.messages.append({"role": "user", "content": "hello"})
+        assert len(pipeline.state.messages) == 1
+
+        new_bundle = bundle.replace()  # same providers
+        await pipeline.update_providers(new_bundle)
+        await asyncio.sleep(0.05)
+        return pipeline.state.messages
+
+    messages = asyncio.run(run())
+    assert len(messages) == 1
+    assert messages[0]["content"] == "hello"

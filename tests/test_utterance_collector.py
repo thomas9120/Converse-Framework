@@ -104,6 +104,12 @@ class FakeVADProvider:
     async def check_status(self) -> ProviderStatus:
         return self.status
 
+    async def probe_status(self) -> ProviderStatus:
+        return self.status
+
+    async def load_status(self) -> ProviderStatus:
+        return self.status
+
     async def process_frame(self, frame: AudioFrame) -> list[VADEvent]:
         self.calls += 1
         if self.raise_value_error:
@@ -763,3 +769,64 @@ def test_zero_thresholds_pass_through():
     assert by_type(events, "vad.speech_rejected") == []
     assert by_type(events, "asr.audio_trimmed") == []
     assert len(utterances) == 1
+
+
+# ---------------------------------------------------------------------------
+# Phase 3: update_vad_provider
+# ---------------------------------------------------------------------------
+
+
+def test_update_vad_provider_swaps_when_idle():
+    """update_vad_provider() succeeds when no utterance is being recorded."""
+
+    async def run():
+        collector, _, _, _ = make_collector()
+        original = collector._vad
+        new_vad = FakeVADProvider()
+        collector.update_vad_provider(new_vad)
+        return original, new_vad, collector._vad
+
+    original, new_vad, current = asyncio.run(run())
+    assert current is new_vad
+    assert current is not original
+
+
+def test_update_vad_provider_rejects_while_recording():
+    """update_vad_provider() raises RuntimeError during active utterance."""
+
+    async def run():
+        vad = FakeVADProvider(
+            scripted=[
+                [
+                    VADEvent(type="vad.speech_start", probability=0.9, audio_ms=30),
+                ]
+            ]
+        )
+        collector, queue, _, _ = make_collector(vad=vad)
+        # Ingest a frame that triggers speech_start
+        await collector.ingest_frame(make_frame(sequence=0, samples=[0] * 480))
+        assert collector.is_recording
+
+        with pytest.raises(RuntimeError, match="recording"):
+            collector.update_vad_provider(FakeVADProvider())
+        return collector._vad
+
+    current = asyncio.run(run())
+    # Original VAD still in place
+    assert current is not None
+
+
+def test_update_vad_provider_clears_pre_buffer():
+    """update_vad_provider() clears the pre-speech buffer."""
+
+    async def run():
+        collector, _, _, _ = make_collector()
+        # Feed some frames into the pre-buffer
+        for seq in range(5):
+            await collector.ingest_frame(make_frame(sequence=seq, samples=[0] * 480))
+        assert len(collector._pre_buffer) > 0
+        collector.update_vad_provider(FakeVADProvider())
+        return len(collector._pre_buffer)
+
+    buf_len = asyncio.run(run())
+    assert buf_len == 0

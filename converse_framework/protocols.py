@@ -100,6 +100,44 @@ class ProviderStatus:
 
 
 @dataclass(frozen=True)
+class VoiceInfo:
+    """Structured metadata for a voice supported by a TTS provider.
+
+    Attributes:
+        id: Machine-readable voice identifier (e.g. ``"azelma"``).
+        label: Human-readable voice display name (e.g. ``"Azelma"``).
+        language: ISO language code for the voice (e.g. ``"en"``, ``"fr"``).
+        description: Optional human-readable description.
+        gender: Optional gender hint (``"male"``, ``"female"``, ``"neutral"``).
+    """
+
+    id: str
+    label: str
+    language: str = "en"
+    description: str = ""
+    gender: str = "neutral"
+
+
+@dataclass(frozen=True)
+class ProviderConfigResult:
+    """Result of a provider :meth:`~TTSProvider.configure` call.
+
+    Attributes:
+        status: The provider's status after applying the change.
+        changed: True if at least one option value actually changed.
+        requires_reload: True if the change invalidated cached model
+            or voice state and the provider needs a :meth:`load` call
+            before it can be used again.
+        message: Human-readable summary of what was changed.
+    """
+
+    status: ProviderStatus
+    changed: bool = False
+    requires_reload: bool = False
+    message: str = ""
+
+
+@dataclass(frozen=True)
 class TranscriptEvent:
     """A single incremental transcript chunk produced by an ASR provider.
 
@@ -310,6 +348,32 @@ class TTSProvider(Protocol):
     async def load(self) -> ProviderStatus: ...
 
     async def unload(self) -> ProviderStatus: ...
+
+    async def configure(self, **options) -> ProviderConfigResult:
+        """Apply configuration changes.
+
+        Supported options depend on the provider implementation.
+        Returns a :class:`ProviderConfigResult` describing whether
+        the change was applied and whether a reload is required.
+        """
+        from .protocols import ProviderConfigResult
+
+        return ProviderConfigResult(
+            status=await self.check_status(),
+            changed=False,
+            requires_reload=False,
+            message="configure() is not implemented by this provider.",
+        )
+
+    def list_voices(self) -> tuple[VoiceInfo, ...]:
+        """Return structured metadata for voices this provider supports.
+
+        Implementations should return static metadata where possible
+        rather than importing the heavy backend just to enumerate
+        voices.
+        """
+
+        return ()
 
     def stream_audio(self, text: str) -> AsyncIterator[AudioChunk]: ...
 

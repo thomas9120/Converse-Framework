@@ -191,6 +191,184 @@ def test_pocket_tts_set_quantize_unloads_when_mode_changes():
 
 
 # ---------------------------------------------------------------------------
+# Phase 4: Pocket TTS voice and config support
+# ---------------------------------------------------------------------------
+
+
+def test_pocket_tts_set_voice_clears_only_voice_state():
+    """set_voice() clears _voice_state but keeps _model loaded."""
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "voice": "azelma"},
+        ),
+    )
+    assert provider._model is not None
+    assert provider._voice_state is not None
+
+    result = provider.set_voice("bela")
+    assert result.active_voice == "bela"
+    # Model stays loaded
+    assert provider._model is not None
+    # Voice state cleared
+    assert provider._voice_state is None
+
+
+def test_pocket_tts_set_voice_to_same_keeps_state():
+    """set_voice() with the same voice keeps model and voice state."""
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "voice": "azelma"},
+        ),
+    )
+    result = provider.set_voice("azelma")
+    assert provider._model is not None
+    assert provider._voice_state is not None
+    assert result.active_voice == "azelma"
+
+
+def test_pocket_tts_configure_max_tokens_no_unload():
+    """configure(max_tokens=...) changes the value without unloading."""
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "max_tokens": 50},
+        ),
+    )
+
+    result = asyncio.run(provider.configure(max_tokens=100))
+    assert result.changed is True
+    assert result.requires_reload is False
+    assert provider.max_tokens == 100
+    # Model and voice state untouched
+    assert provider._model is not None
+    assert provider._voice_state is not None
+
+
+def test_pocket_tts_configure_coalesce_ms_no_unload():
+    """configure(coalesce_ms=...) changes the value without unloading."""
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "coalesce_ms": 400},
+        ),
+    )
+
+    result = asyncio.run(provider.configure(coalesce_ms=600))
+    assert result.changed is True
+    assert result.requires_reload is False
+    assert provider.coalesce_ms == 600
+    assert provider._model is not None
+    assert provider._voice_state is not None
+
+
+def test_pocket_tts_configure_voice_unloads_voice_state():
+    """configure(voice=...) clears voice state but keeps model."""
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "voice": "azelma"},
+        ),
+    )
+
+    result = asyncio.run(provider.configure(voice="bela"))
+    assert result.changed is True
+    assert result.requires_reload is True
+    assert provider.voice == "bela"
+    assert provider._model is not None
+    assert provider._voice_state is None
+
+
+def test_pocket_tts_configure_quantize_unloads_all():
+    """configure(quantize=True) clears model and voice state."""
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "quantize": False},
+        ),
+    )
+
+    result = asyncio.run(provider.configure(quantize=True))
+    assert result.changed is True
+    assert result.requires_reload is True
+    assert provider.quantize is True
+    assert provider._model is None
+    assert provider._voice_state is None
+
+
+def test_pocket_tts_configure_temp_unloads_all():
+    """configure(temp=...) clears model and voice state."""
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "temp": 0.7},
+        ),
+    )
+
+    result = asyncio.run(provider.configure(temp=0.5))
+    assert result.changed is True
+    assert result.requires_reload is True
+    assert abs(provider.temp - 0.5) < 1e-6
+    assert provider._model is None
+    assert provider._voice_state is None
+
+
+def test_pocket_tts_configure_noop_returns_no_changes():
+    """configure() with unchanged values returns changed=False."""
+    provider = cast(
+        PocketTTSProvider,
+        build_provider(
+            "tts",
+            "pocket-tts",
+            {"_model": object(), "_voice_state": object(), "max_tokens": 50},
+        ),
+    )
+
+    result = asyncio.run(provider.configure(max_tokens=50))
+    assert result.changed is False
+    assert result.requires_reload is False
+
+
+def test_pocket_tts_list_voices_returns_structured_voice_info():
+    """list_voices() returns VoiceInfo tuples without importing backend."""
+    from converse_framework.protocols import VoiceInfo
+
+    provider = cast(
+        PocketTTSProvider,
+        build_provider("tts", "pocket-tts", {"voice": "azelma"}),
+    )
+
+    voices = provider.list_voices()
+    assert len(voices) >= 3
+    assert isinstance(voices[0], VoiceInfo)
+    assert voices[0].id == "azelma"
+    assert voices[0].label == "Azelma"
+
+    # Find a voice by id
+    by_id = {v.id: v for v in voices}
+    assert "bela" in by_id
+    assert by_id["bela"].language == "en"
+    # French voices
+    assert by_id["jean"].language == "fr"
+    assert by_id["jean"].gender == "neutral"
+
+
+# ---------------------------------------------------------------------------
 # Missing-dep friendly errors
 # ---------------------------------------------------------------------------
 

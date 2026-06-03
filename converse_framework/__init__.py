@@ -31,11 +31,13 @@ from converse_framework.protocols import (
     AudioChunk,
     LLMProvider,
     ProviderCapabilities,
+    ProviderConfigResult,
     ProviderStatus,
     TTSProvider,
     TranscriptEvent,
     VADEvent,
     VADProvider,
+    VoiceInfo,
 )
 from converse_framework.providers.unavailable import extra_hint_for, missing_extra_for
 from converse_framework.registry import (
@@ -70,6 +72,7 @@ __all__ = [
     "LLMProvider",
     "ProviderBundle",
     "ProviderCapabilities",
+    "ProviderConfigResult",
     "ProviderStatus",
     "PipelineConfig",
     "provider_error_event",
@@ -84,6 +87,7 @@ __all__ = [
     "TransportEventSink",
     "UtteranceCollectorConfig",
     "VADEvent",
+    "VoiceInfo",
     "VADProvider",
     "build_provider",
     "build_provider_bundle",
