@@ -14,6 +14,16 @@ does not add a dependency to the base framework package. To run it::
 The mock providers are used by default. Pass a provider config to
 :func:`build_websocket_voice_runtime` when embedding this recipe in a
 real app.
+
+.. note::
+
+   Mobile browser microphone access (``getUserMedia``) requires a
+   **secure context** — HTTPS, ``localhost``, or ``127.0.0.1``.
+   Over a plain ``http://<lan-ip>`` page, ``getUserMedia`` will be
+   rejected on mobile browsers.  See the "Mobile Browser Microphone
+   Testing" section in the README for tunnel and HTTPS recipes.
+   The WebSocket URL for tunneled setups changes from
+   ``ws://<host>/ws`` to ``wss://<tunnel-host>/ws``.
 """
 
 from __future__ import annotations
@@ -132,7 +142,9 @@ async def handle_websocket_message(
         return
 
     await transport.send_event(
-        FrameworkEvent("turn.error", {"message": f"unknown message type: {message_type}"})
+        FrameworkEvent(
+            "turn.error", {"message": f"unknown message type: {message_type}"}
+        )
     )
 
 

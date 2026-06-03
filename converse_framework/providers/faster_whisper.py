@@ -49,6 +49,8 @@ class FasterWhisperASRProvider(ASRProvider):
         self.timeout_s = float(config.get("timeout_s", 120))
         self._model = config.get("_model")
         self._load_error: str | None = None
+        self._auto_cuda_dll_dirs = bool(config.get("auto_cuda_dll_dirs", True))
+        self._cuda_dll_handles: list[object] = []
 
     @property
     def status(self) -> ProviderStatus:
@@ -240,6 +242,9 @@ class FasterWhisperASRProvider(ASRProvider):
     def _ensure_model(self) -> None:
         if self._model is not None:
             return
+        # Windows CUDA DLL directory discovery (conservative, best-effort).
+        if self._auto_cuda_dll_dirs:
+            self._add_cuda_dll_dirs()
         try:
             from faster_whisper import WhisperModel  # type: ignore[import-not-found]
 
@@ -250,6 +255,16 @@ class FasterWhisperASRProvider(ASRProvider):
             self._load_error = str(exc)
             raise
 
+    def _add_cuda_dll_dirs(self) -> None:
+        """Register NVIDIA wheel DLL directories if on Windows."""
+        # Local import to keep cuda_utils optional.
+        try:
+            from converse_framework.cuda_utils import add_nvidia_dll_directories
+
+            self._cuda_dll_handles = add_nvidia_dll_directories()
+        except Exception:  # pragma: no cover
+            logger.debug("CUDA DLL discovery skipped or failed.")
+
     async def unload(self) -> ProviderStatus:
         if self._model is not None:
             logger.info(
@@ -259,6 +274,7 @@ class FasterWhisperASRProvider(ASRProvider):
             )
             self._model = None
         self._load_error = None
+        self._cuda_dll_handles.clear()
         return self.status
 
     def _emit_progress_threadsafe(

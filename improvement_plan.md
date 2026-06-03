@@ -355,71 +355,62 @@ Tests:
   - `onStateChange` callback fires suppressed/tail/idling.
 - [x] `tests/js/manual-smoke-test.html` includes guard toggle with visual indcicator.
 
-## Phase 7: CUDA DLL Discovery Helper and Docs
+## Phase 7: CUDA DLL Discovery Helper and Docs ✅
 
-### 7.1 Add Windows NVIDIA wheel DLL helper
-
-Problem: on Windows, `nvidia-cublas-cu12` installs DLLs under `site-packages/nvidia/cublas/bin`, but CTranslate2 may not find them unless launchers add those folders to the DLL search path.
+### 7.1 Add Windows NVIDIA wheel DLL helper ✅
 
 Implementation:
 
-- Add `converse_framework/cuda_utils.py`.
-- Public helpers:
-  - `discover_nvidia_dll_dirs() -> list[Path]`
-  - `add_nvidia_dll_directories() -> list[object]`
-  - `format_nvidia_dll_diagnostic() -> str`
-- Behavior:
-  - Only active on Windows for `os.add_dll_directory`.
-  - Search installed distributions or `site.getsitepackages()` / `sys.path` for:
-    - `nvidia/cublas/bin`
-    - `nvidia/cudnn/bin`
-    - future `nvidia/*/bin` folders with `.dll` files.
-  - Return handles from `os.add_dll_directory()` so callers can keep them alive.
-  - Do not raise if no folders are found; return an empty list with a diagnostic string.
-- Consider calling this helper inside `FasterWhisperASRProvider._ensure_model()` before importing/constructing `WhisperModel`, but make it conservative:
-  - Windows only.
-  - best effort.
-  - can be disabled by config, e.g. `{"auto_cuda_dll_dirs": False}`.
+- [x] `converse_framework/cuda_utils.py`.
+- [x] `discover_nvidia_dll_dirs() -> list[Path]` — searches site-packages for `nvidia/*/bin` folders with `.dll` files.
+- [x] `add_nvidia_dll_directories() -> list[object]` — calls `os.add_dll_directory()` on discovered dirs, returns handles.
+- [x] `format_nvidia_dll_diagnostic() -> str` — human-readable diagnostic string for log output.
+- [x] Windows-only via `sys.platform != "win32"` guard.
+- [x] Deduplicates identical search roots within the same process.
+- [x] Searches: `nvidia/cublas/bin`, `nvidia/cudnn/bin`, `nvidia/cusparse/bin`, `nvidia/cusolver/bin`, `nvidia/curand/bin`.
+- [x] Only returns directories that contain at least one `.dll` file.
+- [x] Does not raise when no directories are found; returns empty list.
+- [x] Integrated into `FasterWhisperASRProvider._ensure_model()`:
+  - [x] Called before importing `WhisperModel`.
+  - [x] Controlled by `auto_cuda_dll_dirs` config option (default `True`).
+  - [x] Handles are cleared on `unload()`.
+  - [x] Best-effort — failures are logged, not raised.
 
 Tests:
 
-- Unit test discovery with monkeypatched paths/temp dirs.
-- Unit test non-Windows no-op behavior with monkeypatch.
-- Provider test that `_ensure_model()` invokes helper when enabled, without requiring CUDA.
+- [x] `tests/test_cuda_utils.py` — **14 tests**:
+  - `discover_nvidia_dll_dirs`:
+    - non-Windows returns empty.
+    - discovers 3 NVIDIA DLL dirs from fake tree (cublas, cudnn, cusparse).
+    - empty when no site-packages.
+    - deduplicates identical roots.
+  - `add_nvidia_dll_directories`:
+    - non-Windows no-op.
+    - invokes `os.add_dll_directory` for each discovered dir.
+    - handles `add_dll_directory` failure gracefully (returns empty).
+  - `format_nvidia_dll_diagnostic`:
+    - non-Windows output mentions Windows-only.
+    - Windows without DLLs reports "none found".
+    - Windows with DLLs lists filenames.
+  - Provider integration:
+    - `_ensure_model()` calls CUDA helper when enabled.
+    - `_ensure_model()` skips helper when `auto_cuda_dll_dirs=False`.
+  - `_get_search_roots`:
+    - returns existing Path objects.
+    - deduplicates.
+- [x] 239 total Python tests (was 225).
 
-Docs:
-
-- README faster-whisper section:
-  - Explain CPU vs CUDA install.
-  - Explain Windows `nvidia-cublas-cu12` DLL layout.
-  - Show launcher snippet:
-    ```python
-    from converse_framework.cuda_utils import add_nvidia_dll_directories
-    _dll_handles = add_nvidia_dll_directories()
-    ```
-
-## Phase 8: Mobile HTTPS and Tunnel Recipe
-
-Problem: browser WebSocket microphone access needs HTTPS or a trusted localhost context for mobile testing.
+## Phase 8: Mobile HTTPS and Tunnel Recipe ✅
 
 Implementation:
 
-- Add README section "Mobile Browser Microphone Testing".
-- Include recipes for:
-  - local desktop browser on `localhost`;
-  - same LAN with HTTPS caveat;
-  - Cloudflare Tunnel;
-  - ngrok;
-  - local cert option for advanced users.
-- Add an example launcher script only if the repo already has a scripts pattern. Otherwise keep this documented to avoid adding operational dependencies.
-- In the WebSocket example docstring, mention that mobile microphone use requires HTTPS/tunnel even if the server recipe itself is plain WebSocket locally.
-
-Acceptance criteria:
-
-- A user can run the WebSocket recipe locally and know why mobile mic access fails over plain `http://<LAN-IP>`.
-- The docs include the expected WebSocket URL forms:
-  - `ws://localhost:8000/ws`
-  - `wss://<tunnel-host>/ws`
+- [x] README section "Mobile Browser Microphone Testing" added after browser playback section.
+- [x] Recipes included: localhost desktop, same-LAN caveat, Cloudflare Tunnel, ngrok, local trusted cert (`mkcert`).
+- [x] No launcher script — repo has no `scripts/` pattern; kept documented to avoid operational dependencies.
+- [x] WebSocket URL forms table: `ws://localhost:8000/ws`, `ws://<lan-ip>:8000/ws`, `wss://<tunnel>/ws`, `wss://<lan-ip>:8000/ws`.
+- [x] `converse_framework/examples/websocket_voice_chat.py` docstring updated with HTTPS/tunnel note.
+- [x] Acceptance criteria met: doc explains why `http://<LAN-IP>` fails on mobile, includes both URL forms.
+- [x] Also added Browser Microphone Capture section documenting `mic-frame-sender.js`, `speaker-echo-guard.js`, and `browser-voice-client.js` alongside the mobile testing section.
 
 ## Phase 9: Documentation and Migration Updates
 

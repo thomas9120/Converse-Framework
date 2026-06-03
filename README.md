@@ -388,6 +388,124 @@ s16le with explicit sample rate, channels, and `final` flag) and
 ignores anything that is not `pcm_s16le` with a console warning. Drop
 the file into your static assets directory; no npm / bundler required.
 
+#### Browser microphone capture (JS reference client)
+
+The framework ships a vanilla JavaScript microphone capture class at
+`converse_framework/js/mic-frame-sender.js`. It uses `getUserMedia` and
+an `AudioWorkletNode` (with inline blob-URL processor, falling back to
+`ScriptProcessorNode`) to deliver 16-bit PCM s16le frames at a
+configurable interval:
+
+```html
+<script src="converse_framework/js/mic-frame-sender.js"></script>
+<script>
+  const ws = new WebSocket("ws://localhost:8000/ws");
+  const mic = new MicFrameSender({
+    webSocket: ws,
+    sampleRate: 16000,
+    channels: 1,
+    frameMs: 30,
+    onLevel: (db) => console.log("mic level", db.toFixed(1)),
+  });
+  mic.start(); // begins capture after user gesture
+</script>
+```
+
+A composed client at `converse_framework/js/browser-voice-client.js`
+combines `MicFrameSender`, `TtsAudioPlayer`, and an optional
+`SpeakerEchoGuard` (see `converse_framework/js/speaker-echo-guard.js`)
+into a single class with automatic WebSocket event dispatch.
+
+Mobile microphone access requires additional HTTPS / tunnel setup
+(see next section).
+
+#### Mobile Browser Microphone Testing
+
+Browser microphone capture (via `getUserMedia`) requires a **secure
+context** — HTTPS, `localhost`, or `127.0.0.1`.  This is not a
+framework limitation; it is a browser security requirement.
+
+**Local desktop development** — `localhost` is always considered
+secure.  A plain `ws://localhost:8000/ws` works with no extra setup.
+
+**Same-LAN testing (desktop)** — also works, because
+`ws://<lan-ip>/ws` is accepted by desktop browsers for
+`WebSocket.send()` (it is the `getUserMedia` call that checks the page
+context, not the WebSocket itself).  Serve the HTML page itself via
+HTTPS to keep mobile browsers happy (see below).
+
+**Mobile device on same LAN** — a plain `http://<lan-ip>` page will
+be rejected by mobile browsers when calling `getUserMedia`.  You need
+either a tunnel that provides HTTPS or a local trusted certificate.
+
+---
+
+**Option 1 — Cloudflare Tunnel (recommended for testing)**
+
+1. Install `cloudflared` (`winget install cloudflare.cloudflared` on
+   Windows, `brew install cloudflare/cloudflare/cloudflared` on macOS,
+   or download from the Cloudflare Zero Trust dashboard).
+2. Start your server on port 8000:
+   ```bash
+   uvicorn converse_framework.examples.websocket_voice_chat:create_app --factory
+   ```
+3. Run the tunnel:
+   ```bash
+   cloudflared tunnel --url http://localhost:8000
+   ```
+4. Cloudflare prints a public `https://<random>.trycloudflare.com` URL.
+5. Open that URL on your mobile device.  Change the WebSocket URL in
+   your client to `wss://<random>.trycloudflare.com/ws`.
+
+---
+
+**Option 2 — ngrok**
+
+1. Install ngrok from https://ngrok.com/download.
+2. Start your server on port 8000.
+3. Tunnel:
+   ```bash
+   ngrok http 8000
+   ```
+4. Use the generated `https://<random>.ngrok-free.app` URL.
+5. WebSocket URL: `wss://<random>.ngrok-free.app/ws`.
+
+---
+
+**Option 3 — Local trusted certificate (advanced)**
+
+Use `mkcert` to create a trusted CA-signed cert for your LAN IP::
+
+```bash
+# Install mkcert once
+brew install mkcert  # macOS
+winget install mkcert  # Windows (or scoop install mkcert)
+mkcert -install
+
+# Create a cert for your LAN IP, e.g. 192.168.1.42
+mkcert 192.168.1.42 localhost 127.0.0.1
+
+# Run uvicorn with the generated key/cert files
+uvicorn converse_framework.examples.websocket_voice_chat:create_app --factory \
+    --ssl-keyfile ./192.168.1.42-key.pem \
+    --ssl-certfile ./192.168.1.42.pem
+```
+
+The page and WebSocket are now served over `https://192.168.1.42:8000`
+and `wss://192.168.1.42:8000/ws` respectively.  The `mkcert` root CA
+must be installed on the mobile device (see `mkcert` docs for Android
+/iOS instructions).
+
+---
+
+**Summary of WebSocket URL forms**
+
+| Scenario | Page URL | WebSocket URL |
+|---|---|---|
+| Desktop localhost | `http://localhost:8000` | `ws://localhost:8000/ws` |
+| Desktop same LAN | `http://<lan-ip>:8000` | `ws://<lan-ip>:8000/ws` |
+| Mobile via tunnel | `https://<tunnel>/` | `wss://<tunnel>/ws` |
+| Mobile via local cert | `https://<lan-ip>:8000` | `wss://<lan-ip>:8000/ws` |
 #### Wrap an external CLI as a provider
 
 When the engine you want to use is only available as a CLI binary
