@@ -208,8 +208,8 @@ def test_pocket_tts_set_voice_clears_only_voice_state():
     assert provider._model is not None
     assert provider._voice_state is not None
 
-    result = provider.set_voice("bela")
-    assert result.active_voice == "bela"
+    result = provider.set_voice("anna")
+    assert result.active_voice == "anna"
     # Model stays loaded
     assert provider._model is not None
     # Voice state cleared
@@ -282,10 +282,10 @@ def test_pocket_tts_configure_voice_unloads_voice_state():
         ),
     )
 
-    result = asyncio.run(provider.configure(voice="bela"))
+    result = asyncio.run(provider.configure(voice="anna"))
     assert result.changed is True
     assert result.requires_reload is True
-    assert provider.voice == "bela"
+    assert provider.voice == "anna"
     assert provider._model is not None
     assert provider._voice_state is None
 
@@ -354,17 +354,50 @@ def test_pocket_tts_list_voices_returns_structured_voice_info():
     )
 
     voices = provider.list_voices()
-    assert len(voices) >= 3
+    expected_ids = [
+        "alba",
+        "giovanni",
+        "lola",
+        "juergen",
+        "rafael",
+        "estelle",
+        "anna",
+        "azelma",
+        "bill_boerst",
+        "caro_davy",
+        "charles",
+        "cosette",
+        "eponine",
+        "eve",
+        "fantine",
+        "george",
+        "jane",
+        "jean",
+        "javert",
+        "marius",
+        "mary",
+        "michael",
+        "paul",
+        "peter_yearsley",
+        "stuart_bell",
+        "vera",
+    ]
+    assert [v.id for v in voices] == expected_ids
     assert isinstance(voices[0], VoiceInfo)
-    assert voices[0].id == "azelma"
-    assert voices[0].label == "Azelma"
+    assert voices[0].id == "alba"
+    assert voices[0].label == "Alba"
 
     # Find a voice by id
     by_id = {v.id: v for v in voices}
-    assert "bela" in by_id
-    assert by_id["bela"].language == "en"
-    # French voices
-    assert by_id["jean"].language == "fr"
+    assert "anna" in by_id
+    assert by_id["anna"].language == "en"
+    # Multilingual voices
+    assert by_id["estelle"].language == "fr"
+    assert by_id["giovanni"].language == "it"
+    assert by_id["lola"].language == "es"
+    assert by_id["juergen"].language == "de"
+    assert by_id["rafael"].language == "pt"
+    assert by_id["jean"].language == "en"
     assert by_id["jean"].gender == "neutral"
 
 

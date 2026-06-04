@@ -226,10 +226,10 @@ async def test_settings_update_routes_to_hook():
     session = WebSocketSession(transport, hooks=hooks)  # type: ignore[arg-type]
 
     await session.handle_message(
-        {"type": "settings.update", "payload": {"voice": "bela"}}
+        {"type": "settings.update", "payload": {"voice": "anna"}}
     )
     assert len(settings_log) == 1
-    assert settings_log[0] == {"voice": "bela"}
+    assert settings_log[0] == {"voice": "anna"}
 
 
 @pytest.mark.asyncio
@@ -238,7 +238,7 @@ async def test_settings_update_no_hook_is_silent():
     session = WebSocketSession(transport)  # type: ignore[arg-type]
 
     await session.handle_message(
-        {"type": "settings.update", "payload": {"voice": "bela"}}
+        {"type": "settings.update", "payload": {"voice": "anna"}}
     )
     # No events — session silently ignores unhandled settings
     assert len(transport.sent) == 0
