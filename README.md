@@ -629,7 +629,7 @@ for v in voices:
 Change voice (clears only the voice cache, preserves the loaded model):
 
 ```python
-result = provider.configure(voice="galileo")
+result = provider.configure(voice="anna")
 print(result.changed, result.requires_reload)
 # True, False — model stays, voice state reloaded
 ```
