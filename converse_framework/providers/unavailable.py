@@ -22,10 +22,12 @@ EXTRAS: dict[tuple[str, str], str] = {
     ("vad", "silero"): "silero",
     ("asr", "faster-whisper"): "faster-whisper",
     ("asr", "whisper-cpp"): "whisper-cpp",
+    ("asr", "audio-cpp"): "audio-cpp",
     ("llm", "llamacpp"): "llamacpp",
     ("tts", "kokoro"): "kokoro",
     ("tts", "kokoro-onnx"): "kokoro",
     ("tts", "pocket-tts"): "pocket-tts",
+    ("tts", "audio-cpp"): "audio-cpp",
 }
 
 # Backward-compatible table exported for callers that already use it.

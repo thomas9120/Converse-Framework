@@ -30,14 +30,15 @@ faster-whisper = [
 ]
 llamacpp = ["httpx>=0.28"]
 whisper-cpp = ["httpx>=0.28"]
+audio-cpp = ["httpx>=0.28"]
 # kokoro-onnx 0.5.0 requires Python <3.14; on 3.14+ the wheel build will fail
 # at install time, which is the desired "fail fast" behaviour.
 kokoro = ["kokoro-onnx>=0.5; python_version < '3.14'", "misaki>=0.7"]
 pocket-tts = ["pocket-tts>=2.1"]
 all-vad = ["converse-framework[silero]"]
-all-asr = ["converse-framework[faster-whisper,whisper-cpp]"]
+all-asr = ["converse-framework[faster-whisper,whisper-cpp,audio-cpp]"]
 all-llm = ["converse-framework[llamacpp]"]
-all-tts = ["converse-framework[kokoro,pocket-tts]"]
+all-tts = ["converse-framework[kokoro,pocket-tts,audio-cpp]"]
 all = ["converse-framework[all-vad,all-asr,all-llm,all-tts]"]
 
 [tool.hatch.build.targets.wheel]

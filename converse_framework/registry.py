@@ -369,6 +369,12 @@ register_provider(
     availability_probe=_probe_module("httpx"),
 )
 register_provider(
+    "asr",
+    "audio-cpp",
+    "converse_framework.providers.audio_cpp:AudioCppASRProvider",
+    availability_probe=_probe_module("httpx"),
+)
+register_provider(
     "llm",
     "llamacpp",
     "converse_framework.providers.llamacpp:LlamaCppProvider",
@@ -394,4 +400,10 @@ register_provider(
     "pocket-tts",
     "converse_framework.providers.pocket_tts:PocketTTSProvider",
     availability_probe=_probe_module("pocket_tts"),
+)
+register_provider(
+    "tts",
+    "audio-cpp",
+    "converse_framework.providers.audio_cpp:AudioCppTTSProvider",
+    availability_probe=_probe_module("httpx"),
 )

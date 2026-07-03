@@ -14,6 +14,7 @@ from converse_framework.audio_utils import (
     parse_audio_frame,
     pcm_s16le_to_float32,
     trim_pcm16_silence,
+    wav_bytes_to_pcm_s16le,
 )
 
 
@@ -89,6 +90,57 @@ def test_float_audio_to_wav_bytes_empty():
     import numpy as np
 
     assert float_audio_to_wav_bytes(np.array([], dtype=np.float32), 16000) == b""
+
+
+# ---------------------------------------------------------------------------
+# wav_bytes_to_pcm_s16le
+# ---------------------------------------------------------------------------
+
+
+def test_wav_bytes_to_pcm_s16le_roundtrips_tone():
+    import numpy as np
+
+    audio = np.array(
+        [0.5 * float(i % 100) / 100 for i in range(1600)], dtype=np.float32
+    )
+    wav = float_audio_to_wav_bytes(audio, 16000)
+    pcm, sample_rate, channels = wav_bytes_to_pcm_s16le(wav)
+    assert sample_rate == 16000
+    assert channels == 1
+    # PCM is 2 bytes per sample, same sample count as the input.
+    assert len(pcm) == 1600 * 2
+    # Round-trip floats stay within one quantisation step of the original.
+    decoded = pcm_s16le_to_float32(pcm)
+    assert np.allclose(decoded, audio, atol=2.0 / 32768.0)
+
+
+def test_wav_bytes_to_pcm_s16le_reads_make_tone_wav():
+    wav = make_tone_wav(duration_s=0.05, sample_rate=24000)
+    pcm, sample_rate, channels = wav_bytes_to_pcm_s16le(wav)
+    assert sample_rate == 24000
+    assert channels == 1
+    assert len(pcm) > 0
+    assert len(pcm) % 2 == 0
+
+
+def test_wav_bytes_to_pcm_s16le_empty_and_non_wav():
+    assert wav_bytes_to_pcm_s16le(b"") == (b"", 0, 0)
+    assert wav_bytes_to_pcm_s16le(b"not a wav file") == (b"", 0, 0)
+
+
+def test_wav_bytes_to_pcm_s16le_rejects_unsupported_sample_width():
+    import wave
+    from io import BytesIO
+
+    buffer = BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(1)
+        wav.setframerate(16000)
+        wav.writeframes(b"\x80" * 160)
+
+    with pytest.raises(ValueError, match="16-bit PCM"):
+        wav_bytes_to_pcm_s16le(buffer.getvalue())
 
 
 # ---------------------------------------------------------------------------

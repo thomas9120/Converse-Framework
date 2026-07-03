@@ -175,6 +175,53 @@ def float_audio_to_wav_bytes(audio, sample_rate: int) -> bytes:
     return buffer.getvalue()
 
 
+def wav_bytes_to_pcm_s16le(
+    wav_bytes: bytes,
+) -> tuple[bytes, int, int]:
+    """Decode a WAV byte string back into raw PCM s16le bytes and shape.
+
+    The inverse of :func:`float_audio_to_wav_bytes`: this reads a
+    complete 16-bit PCM WAV file from ``bytes`` and returns the raw
+    signed little-endian PCM body along with the sample rate and channel
+    count declared in the header. Providers that fetch WAV audio from
+    an HTTP backend (e.g. the audio.cpp ``/v1/audio/speech`` endpoint)
+    use this to turn the response into a wire-ready
+    :class:`~converse_framework.protocols.AudioChunk`.
+
+    Args:
+        wav_bytes: A complete WAV file as ``bytes`` (RIFF header + data).
+
+    Returns:
+        A ``(pcm_s16le, sample_rate, channels)`` tuple. ``pcm_s16le`` is
+        the raw 16-bit signed LE PCM bytes with no header;
+        ``sample_rate`` and ``channels`` come from the ``fmt `` chunk.
+        An empty or non-WAV input returns ``(b"", 0, 0)`` rather than
+        raising so callers can treat a failed decode as "no audio".
+
+    Raises:
+        ValueError: If ``wav_bytes`` starts like a WAV stream but cannot
+            be parsed, or if it is not 16-bit PCM audio.
+    """
+    if not wav_bytes or wav_bytes[:4] != b"RIFF":
+        return b"", 0, 0
+    buffer = BytesIO(wav_bytes)
+    try:
+        with wave.open(buffer, "rb") as wav:
+            sample_rate = wav.getframerate()
+            channels = wav.getnchannels()
+            sample_width = wav.getsampwidth()
+            if wav.getcomptype() != "NONE" or sample_width != 2:
+                bits = sample_width * 8
+                raise ValueError(
+                    f"unsupported WAV format: expected 16-bit PCM, got {bits}-bit "
+                    f"{wav.getcompname()}"
+                )
+            pcm = wav.readframes(wav.getnframes())
+    except wave.Error as exc:
+        raise ValueError(f"invalid WAV stream: {exc}") from exc
+    return pcm, sample_rate, channels
+
+
 def float_audio_to_pcm_s16le_bytes(audio) -> bytes:
     """Encode a float audio buffer as raw 16-bit signed LE PCM bytes.
 
