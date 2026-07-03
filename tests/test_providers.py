@@ -747,20 +747,39 @@ def test_faster_whisper_injected_model_skips_load():
 
 def test_faster_whisper_load_failure_sets_error_and_raises():
     """When _ensure_model() fails, _load_error must be set and
-    _transcribe_blocking must raise RuntimeError with an actionable message."""
+    _transcribe_blocking must raise RuntimeError with an actionable message.
+
+    A failing fake ``WhisperModel`` is injected so the load failure is
+    deterministic and does not depend on faster-whisper being absent (which
+    would also make a real network download whenever the extra *is*
+    installed). This exercises the real ``_ensure_model`` error path: its
+    except clause sets ``_load_error`` and re-raises; ``_transcribe_blocking``
+    suppresses the re-raise and then raises the actionable message."""
     from converse_framework.providers.faster_whisper import FasterWhisperASRProvider
 
-    provider = FasterWhisperASRProvider({"model": "tiny", "language": "en"})
-    assert provider._model is None
+    class FailingWhisperModel:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("simulated load failure")
 
-    import numpy as np
+    fake_module = types.ModuleType("faster_whisper")
+    fake_module.WhisperModel = FailingWhisperModel  # type: ignore[assignment]
+    sys.modules["faster_whisper"] = fake_module
 
-    loop = asyncio.new_event_loop()
-    with pytest.raises(RuntimeError, match="faster-whisper model did not load"):
-        provider._transcribe_blocking(np.zeros(1600, dtype=np.float32), None, loop)
-    loop.close()
+    try:
+        provider = FasterWhisperASRProvider({"model": "tiny", "language": "en"})
+        assert provider._model is None
 
-    assert provider._load_error is not None
+        import numpy as np
+
+        loop = asyncio.new_event_loop()
+        with pytest.raises(RuntimeError, match="faster-whisper model did not load"):
+            provider._transcribe_blocking(np.zeros(1600, dtype=np.float32), None, loop)
+        loop.close()
+
+        assert provider._load_error is not None
+        assert "simulated load failure" in provider._load_error
+    finally:
+        sys.modules.pop("faster_whisper", None)
 
 
 def test_register_provider_rejects_unknown_kind():

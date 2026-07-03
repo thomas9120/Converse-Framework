@@ -2,9 +2,10 @@
 
 Mock and unavailable providers are imported eagerly because they have no
 heavy dependencies. The concrete providers (``silero``, ``faster-whisper``,
-``llamacpp``, ``kokoro-onnx``, ``pocket-tts``) are not imported here --
-they are registered with :func:`converse_framework.registry.register_provider`
-by import string and loaded lazily on first use.
+``whisper-cpp``, ``llamacpp``, ``kokoro-onnx``, ``pocket-tts``,
+``audio-cpp``) are not imported here -- they are registered with
+:func:`converse_framework.registry.register_provider` by import string
+and loaded lazily on first use.
 """
 
 from converse_framework.providers.mock import (

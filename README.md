@@ -47,6 +47,7 @@ providers live behind optional extras:
 pip install converse-framework[silero]          # Silero VAD
 pip install converse-framework[faster-whisper]  # faster-whisper ASR
 pip install converse-framework[whisper-cpp]     # whisper.cpp HTTP ASR
+pip install converse-framework[audio-cpp]       # audio.cpp HTTP ASR + TTS
 pip install converse-framework[llamacpp]        # llama.cpp HTTP LLM
 pip install converse-framework[kokoro]          # Kokoro ONNX TTS
 pip install converse-framework[pocket-tts]      # Pocket TTS
@@ -100,12 +101,13 @@ own constraints (the table below mirrors the markers in
 | `faster-whisper` | 3.11+ | The `nvidia-cublas-cu12` wheel pins Windows. |
 | `llamacpp` | 3.11+ | `httpx` itself supports 3.9+, so 3.11+ is the only constraint. |
 | `whisper-cpp` | 3.11+ | Only needs `httpx`, which supports 3.9+. |
+| `audio-cpp` | 3.11+ | Only needs `httpx`. Talks to a user-managed `audiocpp_server`. |
 | `kokoro` | 3.11 to <3.14 | `kokoro-onnx` 0.5.0 requires Python <3.14. The wheel build fails fast on 3.14+. |
 | `pocket-tts` | 3.11+ | No known upper bound. |
 
 The `kokoro` extra is the only one with an upper-bound marker today.
-If you are on Python 3.14+ and need a TTS provider, use `pocket-tts`
-or a mock provider. New providers should add their own
+If you are on Python 3.14+ and need a TTS provider, use `pocket-tts`,
+`audio-cpp`, or a mock provider. New providers should add their own
 `python_version` markers in `pyproject.toml` when their backend has a
 known limit.
 
