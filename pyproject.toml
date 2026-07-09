@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "converse-framework"
-version = "0.2.3"
+version = "0.3.0"
 description = "Provider-agnostic speech stack for speech-to-speech applications"
 readme = "README.md"
 license = { text = "MIT" }
