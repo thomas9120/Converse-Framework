@@ -2,12 +2,17 @@
 
 ## Unreleased
 
-- **OpenAI-compatible LLM provider** — new `openai-compatible` provider
-  name (extra: `openai-compat`) covering any server that implements
-  `/v1/chat/completions` + `/v1/models`: Ollama, LM Studio, vLLM, Groq,
-  OpenRouter, Together, and OpenAI itself. Shares its implementation
-  with the `llamacpp` provider but skips the llama.cpp-specific
-  `/health` probe.
+- **OpenAI-compatible providers (LLM, ASR, TTS)** — new
+  `openai-compatible` provider name (extra: `openai-compat`) registered
+  for all three inference kinds. LLM covers any
+  `/v1/chat/completions` + `/v1/models` server (Ollama, LM Studio,
+  vLLM, Groq, OpenRouter, Together, OpenAI itself) and shares its
+  implementation with the `llamacpp` provider but skips the
+  llama.cpp-specific `/health` probe. ASR uploads a multipart WAV to
+  `/v1/audio/transcriptions` (OpenAI Whisper, Groq hosted Whisper,
+  `speaches` / faster-whisper-server). TTS requests WAV from
+  `/v1/audio/speech` and yields a single final PCM chunk (OpenAI TTS,
+  Kokoro-FastAPI, openedai-speech).
 - **`api_key` support** — both `llamacpp` and `openai-compatible` LLM
   providers accept an `api_key` config option, sent as an
   `Authorization: Bearer` header (matches llama.cpp's `--api-key`).
@@ -17,7 +22,8 @@
 - **Sampler merge fix** — sampler-provider overrides are now merged over
   the constructor defaults instead of replacing them, so returning only
   e.g. `{"top_p": 0.9}` no longer drops `temperature` / `max_tokens`.
-- Fixed a dead `import httpx` check in the llamacpp `probe_status`.
+- Fixed dead `import httpx` checks in the llamacpp and whisper-cpp
+  `probe_status` methods.
 
 ## v0.2.0 — Provider lifecycle, session helper, and browser mic support
 

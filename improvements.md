@@ -18,7 +18,10 @@ Ranked by impact-per-effort. Mark items off as they land.
   - Payoff: one provider covers Ollama, LM Studio, vLLM, Groq, OpenRouter,
     Together, and actual OpenAI.
 
-- [ ] **2. OpenAI-compatible ASR + TTS providers**
+- [x] **2. OpenAI-compatible ASR + TTS providers**
+  (done: `OpenAICompatASRProvider` + `OpenAICompatTTSProvider` in
+  `converse_framework/providers/openai_compat.py`, registered as
+  `"openai-compatible"` for `asr`/`tts`, tests in `tests/test_openai_compat.py`)
   - ASR: `/v1/audio/transcriptions` (multipart WAV upload). Covers OpenAI
     Whisper, Groq hosted Whisper, local servers like `speaches` /
     faster-whisper-server. Copy the httpx provider pattern from

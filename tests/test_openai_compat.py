@@ -1,16 +1,21 @@
-"""Tests for the generic OpenAI-compatible LLM provider.
+"""Tests for the generic OpenAI-compatible providers (LLM, ASR, TTS).
 
 Contract:
 
-* ``build_provider("llm", "openai-compatible", ...)`` returns
-  :class:`OpenAICompatLLMProvider` with its own provider id.
+* ``build_provider(kind, "openai-compatible", ...)`` returns the right
+  concrete class for each of ``llm`` / ``asr`` / ``tts``.
 * ``api_key`` config produces an ``Authorization: Bearer`` header on
-  both the status-check client and the persistent streaming client;
-  no ``api_key`` means no auth header.
-* ``check_status`` goes straight to ``/v1/models`` (no llama.cpp
+  every HTTP client; no ``api_key`` means no auth header.
+* LLM ``check_status`` goes straight to ``/v1/models`` (no llama.cpp
   ``/health`` probe), while :class:`LlamaCppProvider` keeps probing
-  ``/health`` first.
-* The ``converse-framework[openai-compat]`` extra hint is registered.
+  ``/health`` first. ASR/TTS ``check_status`` also uses ``/v1/models``.
+* ASR ``transcribe_audio`` uploads a multipart WAV to
+  ``/v1/audio/transcriptions`` and parses the ``text`` field.
+* TTS ``stream_audio`` POSTs to ``/v1/audio/speech`` with
+  ``response_format: "wav"`` and yields the decoded PCM as a single
+  final :class:`AudioChunk`.
+* The ``converse-framework[openai-compat]`` extra hint is registered
+  for all three kinds.
 """
 
 from __future__ import annotations
@@ -20,8 +25,13 @@ from typing import cast
 
 import pytest
 
+from converse_framework.audio_utils import make_tone_wav
 from converse_framework.providers.llamacpp import LlamaCppProvider
-from converse_framework.providers.openai_compat import OpenAICompatLLMProvider
+from converse_framework.providers.openai_compat import (
+    OpenAICompatASRProvider,
+    OpenAICompatLLMProvider,
+    OpenAICompatTTSProvider,
+)
 from converse_framework.providers.unavailable import extra_hint_for
 from converse_framework.registry import build_provider, is_provider_available
 
@@ -214,3 +224,267 @@ def test_sampler_overrides_merge_over_defaults():
         "max_tokens": 128,
         "top_p": 0.9,
     }
+
+
+# ---------------------------------------------------------------------------
+# ASR + TTS: registration and construction
+# ---------------------------------------------------------------------------
+
+
+def _asr(cfg: dict | None = None) -> OpenAICompatASRProvider:
+    return cast(
+        OpenAICompatASRProvider,
+        build_provider("asr", "openai-compatible", cfg or {}),
+    )
+
+
+def _tts(cfg: dict | None = None) -> OpenAICompatTTSProvider:
+    return cast(
+        OpenAICompatTTSProvider,
+        build_provider("tts", "openai-compatible", cfg or {}),
+    )
+
+
+async def _collect(aiter):
+    out = []
+    async for item in aiter:
+        out.append(item)
+    return out
+
+
+def _fake_post_client(captured: dict, response):
+    """Fake httpx.AsyncClient whose post() records kwargs and returns *response*."""
+
+    class _FakePostClient:
+        def __init__(self, *args, **kwargs):
+            captured["client_kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["post_kwargs"] = kwargs
+            return response
+
+        async def get(self, url):
+            raise AssertionError(f"unexpected GET {url}")
+
+    return _FakePostClient
+
+
+def test_build_provider_returns_asr_and_tts_instances():
+    pytest.importorskip("httpx")
+    asr = _asr({"base_url": "http://x:1", "model": "whisper-1"})
+    tts = _tts({"base_url": "http://x:1", "model": "tts-1", "voice": "alloy"})
+    assert isinstance(asr, OpenAICompatASRProvider)
+    assert isinstance(tts, OpenAICompatTTSProvider)
+    assert asr.status.provider_id == "openai-compatible"
+    assert asr.status.kind == "asr"
+    assert asr.status.managed_externally is True
+    assert tts.status.provider_id == "openai-compatible"
+    assert tts.status.kind == "tts"
+    assert tts.status.active_voice == "alloy"
+
+
+def test_asr_and_tts_registered_and_available():
+    pytest.importorskip("httpx")
+    assert is_provider_available("asr", "openai-compatible") is True
+    assert is_provider_available("tts", "openai-compatible") is True
+
+
+def test_asr_and_tts_extra_hints_registered():
+    assert (
+        extra_hint_for("asr", "openai-compatible")
+        == "converse-framework[openai-compat]"
+    )
+    assert (
+        extra_hint_for("tts", "openai-compatible")
+        == "converse-framework[openai-compat]"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ASR + TTS: check_status via /v1/models
+# ---------------------------------------------------------------------------
+
+
+def test_asr_check_status_uses_models_endpoint(monkeypatch):
+    httpx = pytest.importorskip("httpx")
+    requested: list[str] = []
+    captured: dict = {}
+    monkeypatch.setattr(
+        httpx, "AsyncClient", _fake_async_client(requested, captured)
+    )
+
+    provider = _asr({"base_url": "http://x:1", "model": "test-model", "api_key": "k"})
+    status = asyncio.run(provider.check_status())
+
+    assert status.ready is True
+    assert requested == ["http://x:1/v1/models"]
+    assert captured["headers"] == {"Authorization": "Bearer k"}
+
+
+def test_tts_check_status_rejects_unknown_model(monkeypatch):
+    httpx = pytest.importorskip("httpx")
+    requested: list[str] = []
+    captured: dict = {}
+    monkeypatch.setattr(
+        httpx, "AsyncClient", _fake_async_client(requested, captured)
+    )
+
+    provider = _tts({"base_url": "http://x:1", "model": "not-registered"})
+    status = asyncio.run(provider.check_status())
+
+    assert status.ready is False
+    assert "not-registered" in status.message
+    assert "test-model" in status.message
+
+
+# ---------------------------------------------------------------------------
+# ASR: transcribe_audio multipart upload
+# ---------------------------------------------------------------------------
+
+
+class _FakeJSONResponse:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        pass
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def test_asr_transcribe_audio_uploads_multipart_wav(monkeypatch):
+    httpx = pytest.importorskip("httpx")
+    captured: dict = {}
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_post_client(captured, _FakeJSONResponse({"text": " hello world "})),
+    )
+
+    provider = _asr(
+        {
+            "base_url": "http://x:1",
+            "model": "whisper-1",
+            "language": "en",
+            "api_key": "sk-test",
+        }
+    )
+    pcm = b"\x00\x01" * 1600  # 0.1 s of 16 kHz mono s16le
+    events = asyncio.run(_collect(provider.transcribe_audio(pcm, 16000)))
+
+    assert captured["url"] == "http://x:1/v1/audio/transcriptions"
+    assert captured["client_kwargs"]["headers"] == {"Authorization": "Bearer sk-test"}
+    form = captured["post_kwargs"]["data"]
+    assert form["model"] == "whisper-1"
+    assert form["language"] == "en"
+    assert form["response_format"] == "json"
+    filename, wav_bytes, content_type = captured["post_kwargs"]["files"]["file"]
+    assert filename == "audio.wav"
+    assert wav_bytes[:4] == b"RIFF"
+    assert content_type == "audio/wav"
+    assert len(events) == 1
+    assert events[0].final is True
+    assert events[0].text == "hello world"
+
+
+def test_asr_transcribe_audio_empty_pcm_yields_nothing():
+    pytest.importorskip("httpx")
+    provider = _asr({})
+    events = asyncio.run(_collect(provider.transcribe_audio(b"", 16000)))
+    assert events == []
+
+
+def test_asr_transcribe_audio_rejects_bad_sample_rate():
+    pytest.importorskip("httpx")
+    provider = _asr({})
+
+    async def run():
+        return [e async for e in provider.transcribe_audio(b"\x00\x00", 0)]
+
+    with pytest.raises(ValueError):
+        asyncio.run(run())
+
+
+def test_asr_transcribe_text_input_passthrough():
+    pytest.importorskip("httpx")
+    provider = _asr({})
+    events = asyncio.run(_collect(provider.transcribe_text_input("  hi  ")))
+    assert len(events) == 1
+    assert events[0].text == "hi"
+    assert events[0].final is True
+
+
+# ---------------------------------------------------------------------------
+# TTS: /v1/audio/speech WAV decoding
+# ---------------------------------------------------------------------------
+
+
+class _FakeWavResponse:
+    def __init__(self, content: bytes):
+        self.content = content
+
+    def raise_for_status(self) -> None:
+        pass
+
+
+def test_tts_stream_audio_decodes_wav_to_pcm_chunk(monkeypatch):
+    httpx = pytest.importorskip("httpx")
+    captured: dict = {}
+    wav = make_tone_wav(duration_s=0.05, sample_rate=16000)
+    monkeypatch.setattr(
+        httpx, "AsyncClient", _fake_post_client(captured, _FakeWavResponse(wav))
+    )
+
+    provider = _tts(
+        {
+            "base_url": "http://x:1",
+            "model": "tts-1",
+            "voice": "alloy",
+            "api_key": "sk-test",
+        }
+    )
+    chunks = asyncio.run(_collect(provider.stream_audio("Hello there.")))
+
+    assert captured["url"] == "http://x:1/v1/audio/speech"
+    assert captured["client_kwargs"]["headers"] == {"Authorization": "Bearer sk-test"}
+    payload = captured["post_kwargs"]["json"]
+    assert payload["input"] == "Hello there."
+    assert payload["model"] == "tts-1"
+    assert payload["voice"] == "alloy"
+    assert payload["response_format"] == "wav"
+    assert len(chunks) == 1
+    chunk = chunks[0]
+    assert chunk.encoding == "pcm_s16le"
+    assert chunk.sample_rate == 16000
+    assert chunk.channels == 1
+    assert chunk.final is True
+    assert len(chunk.data) > 0
+
+
+def test_tts_stream_audio_raises_on_non_wav_response(monkeypatch):
+    httpx = pytest.importorskip("httpx")
+    captured: dict = {}
+    monkeypatch.setattr(
+        httpx,
+        "AsyncClient",
+        _fake_post_client(captured, _FakeWavResponse(b"not audio at all")),
+    )
+
+    provider = _tts({"base_url": "http://x:1", "model": "tts-1", "voice": "alloy"})
+    with pytest.raises(RuntimeError, match="WAV"):
+        asyncio.run(_collect(provider.stream_audio("Hello.")))
+
+
+def test_tts_stream_audio_empty_text_yields_nothing():
+    pytest.importorskip("httpx")
+    provider = _tts({})
+    chunks = asyncio.run(_collect(provider.stream_audio("   ")))
+    assert chunks == []

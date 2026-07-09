@@ -18,7 +18,7 @@ Provider-agnostic speech stack for speech-to-speech applications.
   - [Browser microphone capture](#browser-microphone-capture-js-reference-client)
   - [Mobile browser microphone testing](#mobile-browser-microphone-testing)
   - [Wrap an external CLI as a provider](#wrap-an-external-cli-as-a-provider)
-  - [OpenAI-compatible LLM endpoints](#openai-compatible-llm-endpoints)
+  - [OpenAI-compatible endpoints (LLM, ASR, TTS)](#openai-compatible-endpoints-llm-asr-tts)
   - [Pocket TTS voice listing and configuration](#pocket-tts-voice-listing-and-configuration)
   - [CUDA DLL helper](#cuda-dll-helper-windows)
 - [Runtime Provider Updates](#runtime-provider-updates)
@@ -50,7 +50,7 @@ pip install converse-framework[faster-whisper]  # faster-whisper ASR
 pip install converse-framework[whisper-cpp]     # whisper.cpp HTTP ASR
 pip install converse-framework[audio-cpp]       # audio.cpp HTTP ASR + TTS
 pip install converse-framework[llamacpp]        # llama.cpp HTTP LLM
-pip install converse-framework[openai-compat]   # OpenAI-compatible LLM (Ollama, LM Studio, vLLM, ...)
+pip install converse-framework[openai-compat]   # OpenAI-compatible LLM + ASR + TTS (Ollama, Groq, Kokoro-FastAPI, ...)
 pip install converse-framework[kokoro]          # Kokoro ONNX TTS
 pip install converse-framework[pocket-tts]      # Pocket TTS
 pip install converse-framework[all]             # everything
@@ -612,12 +612,17 @@ binary of choice, and register it with `register_provider("asr",
 ships a fake-echo script (`--use-fake-echo`) that lets the driver
 run end-to-end in CI without installing any real ASR.
 
-#### OpenAI-compatible LLM endpoints
+#### OpenAI-compatible endpoints (LLM, ASR, TTS)
 
-The `openai-compatible` LLM provider (requires the `openai-compat`
-extra) talks to any server that implements the OpenAI
-`/v1/chat/completions` and `/v1/models` endpoints: Ollama, LM Studio,
-vLLM, llama.cpp, Groq, OpenRouter, Together, and OpenAI itself.
+The `openai-compatible` provider name (requires the `openai-compat`
+extra) is registered for all three inference kinds and talks to any
+server that implements the matching OpenAI endpoint:
+
+| Kind | Endpoint | Works with |
+|---|---|---|
+| `llm` | `/v1/chat/completions` | Ollama, LM Studio, vLLM, llama.cpp, Groq, OpenRouter, Together, OpenAI |
+| `asr` | `/v1/audio/transcriptions` | OpenAI Whisper, Groq hosted Whisper, `speaches` / faster-whisper-server |
+| `tts` | `/v1/audio/speech` | OpenAI TTS, Kokoro-FastAPI, openedai-speech |
 
 ```python
 from converse_framework import build_provider_bundle
@@ -625,30 +630,51 @@ from converse_framework import build_provider_bundle
 bundle = build_provider_bundle(
     {
         "vad": {"provider": "mock"},
-        "asr": {"provider": "mock"},
+        "asr": {
+            "provider": "openai-compatible",
+            "base_url": "https://api.groq.com/openai",
+            "model": "whisper-large-v3",
+            "api_key": "gsk_...",
+        },
         "llm": {
             "provider": "openai-compatible",
             "base_url": "http://localhost:11434",  # e.g. Ollama; no /v1 suffix
             "model": "llama3.2",                   # "auto" = first listed model
-            "api_key": "sk-...",                   # optional Bearer token
         },
-        "tts": {"provider": "mock"},
+        "tts": {
+            "provider": "openai-compatible",
+            "base_url": "http://localhost:8880",   # e.g. Kokoro-FastAPI
+            "model": "kokoro",
+            "voice": "af_heart",
+        },
     }
 )
 ```
 
-`base_url` must not include the `/v1` path segment -- the provider
-appends `/v1/chat/completions` and `/v1/models` itself. `model`
-defaults to `"auto"`, which resolves to the first entry reported by
-`/v1/models`; hosted services list many models, so set it explicitly
-for anything other than a single-model local server.
+All three accept `base_url` (must not include the `/v1` path segment
+-- the providers append the versioned paths themselves), an optional
+`api_key` sent as an `Authorization: Bearer` header, and `timeout_s`.
+The servers are managed externally; the framework never starts them.
 
-The provider shares its implementation with the `llamacpp` provider
-(which also accepts `api_key`, matching llama.cpp's `--api-key`
-option). The difference is the status check: `llamacpp` probes the
-llama.cpp-native `/health` endpoint first, while `openai-compatible`
-goes straight to `/v1/models`, which every OpenAI-compatible server
-exposes.
+Kind-specific notes:
+
+* **LLM** -- `model` defaults to `"auto"`, which resolves to the first
+  entry reported by `/v1/models`; hosted services list many models, so
+  set it explicitly for anything other than a single-model local
+  server. Shares its implementation with the `llamacpp` provider
+  (which also accepts `api_key`, matching llama.cpp's `--api-key`
+  option); the difference is that `llamacpp` probes the llama.cpp-native
+  `/health` endpoint first, while `openai-compatible` checks
+  `/v1/models` directly.
+* **ASR** -- uploads the utterance as a multipart WAV, so it works with
+  remote/hosted servers (unlike the `audio-cpp` ASR provider, which
+  passes a server-local file path). Optional `language` and
+  `temperature` are forwarded as form fields.
+* **TTS** -- requests `response_format: "wav"` and yields the decoded
+  PCM as a single final chunk, so the server must support WAV output
+  (OpenAI, Kokoro-FastAPI, and openedai-speech all do). `voice` is
+  required by OpenAI; some local servers have a default. Optional
+  `speed` is forwarded.
 
 #### Pocket TTS voice listing and configuration
 
