@@ -105,4 +105,4 @@ __all__ = [
     "trim_pcm16_silence",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"

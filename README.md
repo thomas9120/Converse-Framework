@@ -11,6 +11,7 @@ Provider-agnostic speech stack for speech-to-speech applications.
   - [Python version compatibility](#python-version-compatibility)
 - [Quick Start](#quick-start)
   - [Provider status semantics](#provider-status-semantics)
+- [Turn Latency and Metrics](#turn-latency-and-metrics)
 - [Recipes](#recipes)
   - [Minimal mock text pipeline](#minimal-mock-text-pipeline)
   - [Audio frame to utterance collector to pipeline](#audio-frame-to-utterance-collector-to-pipeline)
@@ -167,6 +168,43 @@ The ``status_level`` field distinguishes ``"ready"``, ``"configured"``,
 ``"loading"``, ``"error"``, and ``"unavailable"``. The old
 ``check_status()`` is kept for backward compatibility and behaves
 the same as ``probe_status()`` for providers that implement it.
+
+## Turn Latency and Metrics
+
+`PipelineConfig.first_chunk_chars` controls the eager first TTS flush. It
+defaults to `40`, so the first audio can start at the first comma or short
+opening clause; later chunks return to the normal `tts_chunk_chars` threshold.
+Set it to `0` to restore the previous single-threshold behavior:
+
+```python
+config = PipelineConfig(
+    first_chunk_chars=40,
+    tts_chunk_chars=120,
+)
+pipeline = SpeechPipeline(providers=bundle, sink=sink, config=config)
+```
+
+Every turn emits a `turn.metrics` event immediately before `turn.finished`:
+
+```json
+{
+  "type": "turn.metrics",
+  "payload": {
+    "mode": "chat",
+    "turn_id": 12,
+    "asr_ms": 184,
+    "llm_first_token_ms": 327,
+    "tts_first_chunk_ms": 511,
+    "total_ms": 842
+  }
+}
+```
+
+The stage fields are turn-relative latency checkpoints. A field is `null` when
+that stage was not reached, such as ASR during a text turn or TTS when no first
+audio chunk was produced before the logical turn completed. This summary avoids
+reconstructing latency from the individual `asr.final`, `llm.first_token`, and
+`tts.first_chunk` events.
 
 ## Recipes
 
@@ -911,13 +949,15 @@ if "vad" in updated:
 The framework provides a reusable :class:`WebSocketSession` that
 handles the common message-dispatch loop for browser-based voice apps.
 It owns the transport, sink, provider bundle, pipeline, collector, and
-frame stats, and routes seven built-in message types without requiring
-the application to copy the recipe state machine.
+frame stats, and routes seven JSON control/message types plus versioned binary
+microphone packets without requiring the application to copy the recipe state
+machine.
 
 Built-in message types:
 
-* ``audio.frame`` — validated PCM frame forwarded to the utterance
-  collector.
+* Binary v1 packet — raw PCM s16le microphone frame forwarded directly to the
+  utterance collector.
+* ``audio.frame`` — legacy JSON/base64 microphone frame; still fully supported.
 * ``text.turn`` — text conversation turn.
 * ``conversation.clear`` — clears per-mode conversation history.
 * ``tts.cancel`` — cancels in-flight TTS synthesis.
@@ -946,25 +986,49 @@ for apps that do not use it.
 Usage sketch:
 
 ```python
+import json
+
 from converse_framework.session import (
     WebSocketSession,
     WebSocketSessionConfig,
     WebSocketSessionHooks,
 )
 
+async def on_settings_update(session, payload):
+    print("settings updated", payload)
+
+
+async def on_event(session, event):
+    print("event", event.type)
+
+
 hooks = WebSocketSessionHooks(
-    on_settings_update=lambda cfg: print("settings updated", cfg),
-    on_event=lambda ev: print("event", ev.type),
+    on_settings_update=on_settings_update,
+    on_event=on_event,
 )
 session = WebSocketSession(
     transport=your_transport,
     config=WebSocketSessionConfig(
-        provider_config={"vad": {"provider": "mock"}, ...},
+        provider_config={
+            "vad": {"provider": "mock"},
+            "asr": {"provider": "mock"},
+            "llm": {"provider": "mock"},
+            "tts": {"provider": "mock"},
+        },
     ),
     hooks=hooks,
 )
 
-async for message in your_websocket:
+while True:
+    packet = await websocket.receive()
+    if packet.get("type") == "websocket.disconnect":
+        break
+    if packet.get("bytes") is not None:
+        message = packet["bytes"]
+    elif packet.get("text") is not None:
+        message = json.loads(packet["text"])
+    else:
+        continue
     await session.handle_message(message)
 ```
 
@@ -1025,11 +1089,13 @@ The framework owns the **provider-agnostic speech stack**:
   `browser-voice-client.js`, `tts-audio-player.js`).
 * CUDA DLL discovery helper (`cuda_utils`).
 
-As of v0.2 the framework also provides safe provider-swap mechanics
+As of v0.3 the framework also provides safe provider-swap mechanics
 (``ProviderBundle.replace()``, ``pipeline.update_providers()``,
 ``collector.update_vad_provider()``), first-class provider
 configuration (``configure()``, ``list_voices()``), and lifecycle
-events (``provider.loading``, ``provider.loaded``, ``provider.error``).
+events (``provider.loading``, ``provider.loaded``, ``provider.error``),
+OpenAI-compatible inference providers, eager first-chunk TTS, per-turn latency
+metrics, and opt-in binary microphone frames.
 
 The framework does **not** own the application. The following stay in
 the consumer app (e.g. the reference harness):
@@ -1053,13 +1119,12 @@ purpose.
 
 ## Status
 
-The package is in v0.1 pre-release. The test matrix below is the
-current contract:
+The current package metadata is v0.3.0. The automated test surfaces are:
 
 | Surface | Tests |
 |---|---:|
-| `converse_framework` (base) | 126 |
-| Reference harness (`Reference-Repository-Conversational-AI-Harness`) | 91 passed, 1 skipped |
+| Python 3.11 / 3.12 / 3.13 | 312 pytest tests |
+| Browser JavaScript helpers | 61 assertions |
 
 Run them locally:
 
@@ -1067,6 +1132,7 @@ Run them locally:
 # Framework (run from the package root)
 python -m pytest
 
-# Harness (run from inside the harness directory)
-python -m pytest
+# Browser helpers
+node tests/js/test_helpers.mjs
+node tests/js/test_speaker_echo_guard.mjs
 ```

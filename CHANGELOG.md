@@ -24,6 +24,16 @@
   previous single-threshold behaviour.
   `SpeechPipeline.update_turn_config` accepts an optional
   `first_chunk_chars` argument.
+- **Turn latency summary** — every turn now emits `turn.metrics`
+  immediately before `turn.finished`, carrying `asr_ms`,
+  `llm_first_token_ms`, `tts_first_chunk_ms`, and `total_ms`. Stages that
+  were not reached are reported as `null`.
+- **Binary microphone frames** — `WebSocketSession` and the FastAPI recipe
+  accept versioned binary-v1 PCM packets. `MicFrameSender` enables them with
+  `frameFormat: "binary-v1"`; legacy JSON/base64 frames remain the default.
+  Outgoing `tts.audio` events remain JSON/base64.
+- **Continuous integration** — pushes and pull requests run pytest on Python
+  3.11, 3.12, and 3.13, plus the browser-helper tests under Node.js.
 - **Persistent LLM connection** — `stream_response` reuses one
   `httpx.AsyncClient` across turns instead of reconnecting per turn;
   the client is closed by `unload()`.

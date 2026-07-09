@@ -1,7 +1,7 @@
-# Migration guide: adopting `converse-framework` v0.1
+# Migration guide: adopting `converse-framework`
 
-The framework is in v0.1 pre-release. The public surface is the
-explicit `__all__` in `converse_framework/__init__.py` — 34
+The current package metadata is v0.3.0. The public surface is the
+explicit `__all__` in `converse_framework/__init__.py` — 42
 symbols at the time of writing — governed by
 `.harness/docs/standards.md` and the Boundary Decisions in
 [`plan.md`](./plan.md). Anything not in `__all__` is internal and
@@ -30,6 +30,7 @@ pip install converse-framework
 pip install converse-framework[silero]          # Silero VAD
 pip install converse-framework[faster-whisper]  # faster-whisper ASR
 pip install converse-framework[llamacpp]        # llama.cpp HTTP LLM
+pip install converse-framework[openai-compat]   # OpenAI-compatible LLM/ASR/TTS
 pip install converse-framework[kokoro]          # Kokoro ONNX TTS
 pip install converse-framework[pocket-tts]      # Pocket TTS
 pip install converse-framework[all]             # everything
@@ -264,10 +265,24 @@ pre-extraction harness: `{"type": event_type, "ts": timestamp,
 that dict, and `QueueEventSink.emit` writes the same shape into
 its queue, so any existing browser client that reads
 `event.type`, `event.ts`, and `event.payload` keeps working. The
-framework does not introduce typed event subclasses in v0.1; that
+framework does not introduce typed event subclasses; that
 work is deferred to a later minor version. `HarnessEvent` is
 exported as a temporary alias of `FrameworkEvent` for one minor
 version; new code should import `FrameworkEvent` directly.
+
+## Additive v0.3 features
+
+No migration is required for the v0.3 improvements:
+
+- The `openai-compatible` provider is additive and uses the optional
+  `openai-compat` extra for LLM, ASR, and TTS endpoints.
+- `PipelineConfig.first_chunk_chars` defaults to `40`; set it to `0` to retain
+  the older single TTS chunk threshold.
+- `turn.metrics` is a new additive event emitted immediately before
+  `turn.finished`. Consumers that ignore unknown event types continue to work.
+- Binary-v1 microphone frames are opt-in in `MicFrameSender`. Existing
+  JSON/base64 `audio.frame` clients remain the default and require no changes.
+  Control messages and outgoing framework events remain JSON.
 
 ## Testing migration
 
@@ -297,7 +312,7 @@ matches the framework release you validated against.
 
 ## Rollback plan
 
-If a v0.1 release regresses the consumer, pin the consumer to the
+If a release regresses the consumer, pin the consumer to the
 last known-good in-tree version of the speech stack. Restore the
 consumer's old local copies plus the small compatibility shims
 under
