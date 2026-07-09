@@ -31,3 +31,22 @@ jobs:
 
       - name: Run tests
         run: python -m pytest -q
+
+  javascript:
+    name: JavaScript helpers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Test microphone frame helpers
+        run: node tests/js/test_helpers.mjs
+
+      - name: Test speaker echo guard
+        run: node tests/js/test_speaker_echo_guard.mjs

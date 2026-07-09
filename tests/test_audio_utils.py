@@ -12,6 +12,7 @@ from converse_framework.audio_utils import (
     float_audio_to_wav_bytes,
     make_tone_wav,
     parse_audio_frame,
+    parse_binary_audio_frame,
     pcm_s16le_to_float32,
     trim_pcm16_silence,
     wav_bytes_to_pcm_s16le,
@@ -218,6 +219,35 @@ def make_payload(sequence=0, sample_rate=16000, channels=1, frame_ms=30, samples
     }
 
 
+def make_binary_packet(
+    sequence=0,
+    sample_rate=16000,
+    channels=1,
+    frame_ms=30,
+    mode="chat",
+    samples=None,
+    magic=b"CF",
+    version=1,
+    kind=1,
+):
+    if samples is None:
+        samples = [0] * (sample_rate * frame_ms // 1000)
+    pcm = struct.pack(f"<{len(samples)}h", *samples)
+    mode_bytes = mode.encode("utf-8")
+    header = struct.pack(
+        ">2sBBIIBHB",
+        magic,
+        version,
+        kind,
+        sequence,
+        sample_rate,
+        channels,
+        frame_ms,
+        len(mode_bytes),
+    )
+    return header + mode_bytes + pcm
+
+
 def test_parse_audio_frame_accepts_expected_pcm():
     stats = AudioFrameStats(
         expected_sample_rate=16000, expected_channels=1, expected_frame_ms=30
@@ -278,6 +308,71 @@ def test_parse_audio_frame_rejects_wrong_byte_count():
     payload = make_payload(samples=[0] * 100)  # 200 bytes, expected 960
     with pytest.raises(ValueError, match="audio bytes"):
         parse_audio_frame(payload, stats)
+
+
+# ---------------------------------------------------------------------------
+# parse_binary_audio_frame
+# ---------------------------------------------------------------------------
+
+
+def test_parse_binary_audio_frame_accepts_v1_packet():
+    stats = AudioFrameStats(
+        expected_sample_rate=16000, expected_channels=1, expected_frame_ms=30
+    )
+    frame, mode = parse_binary_audio_frame(
+        make_binary_packet(sequence=0x01020304, mode="voice-ü"), stats
+    )
+
+    assert frame.sequence == 0x01020304
+    assert frame.sample_rate == 16000
+    assert frame.encoding == "pcm_s16le"
+    assert len(frame.data) == 960
+    assert mode == "voice-ü"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"magic": b"XX"}, "magic"),
+        ({"version": 2}, "version"),
+        ({"kind": 2}, "message kind"),
+        ({"sample_rate": 48000}, "sample_rate"),
+        ({"channels": 2}, "channels"),
+        ({"frame_ms": 20}, "frame_ms"),
+    ],
+)
+def test_parse_binary_audio_frame_rejects_invalid_header_fields(overrides, message):
+    stats = AudioFrameStats(
+        expected_sample_rate=16000, expected_channels=1, expected_frame_ms=30
+    )
+    with pytest.raises(ValueError, match=message):
+        parse_binary_audio_frame(make_binary_packet(**overrides), stats)
+
+
+def test_parse_binary_audio_frame_rejects_truncated_header_and_mode():
+    stats = AudioFrameStats(
+        expected_sample_rate=16000, expected_channels=1, expected_frame_ms=30
+    )
+    with pytest.raises(ValueError, match="shorter"):
+        parse_binary_audio_frame(b"CF\x01", stats)
+
+    packet = bytearray(make_binary_packet())
+    packet[15] = 255
+    with pytest.raises(ValueError, match="truncated in mode"):
+        parse_binary_audio_frame(packet[:20], stats)
+
+
+def test_parse_binary_audio_frame_rejects_invalid_utf8_and_pcm_length():
+    stats = AudioFrameStats(
+        expected_sample_rate=16000, expected_channels=1, expected_frame_ms=30
+    )
+    packet = bytearray(make_binary_packet(mode="x"))
+    packet[16] = 0xFF
+    with pytest.raises(ValueError, match="UTF-8"):
+        parse_binary_audio_frame(packet, stats)
+
+    with pytest.raises(ValueError, match="audio bytes"):
+        parse_binary_audio_frame(make_binary_packet(samples=[0] * 10), stats)
 
 
 # ---------------------------------------------------------------------------

@@ -132,6 +132,59 @@ function assert(condition, label) {
 }
 
 // ---------------------------------------------------------------------------
+// binary audio v1 encoder
+// ---------------------------------------------------------------------------
+
+{
+	const pcm = new Uint8Array([0x34, 0x12, 0xcc, 0xff]).buffer;
+	const packet = MicFrameSender.encodeBinaryAudioFrameV1(pcm, {
+		sequence: 0x01020304,
+		sample_rate: 16000,
+		channels: 1,
+		frame_ms: 30,
+		mode: "chat",
+	});
+	const view = new DataView(packet);
+	const bytes = new Uint8Array(packet);
+	assert(view.getUint8(0) === 0x43 && view.getUint8(1) === 0x46, "binary: CF magic");
+	assert(view.getUint8(2) === 1, "binary: version 1");
+	assert(view.getUint8(3) === 1, "binary: mic message kind");
+	assert(view.getUint32(4, false) === 0x01020304, "binary: sequence network order");
+	assert(view.getUint32(8, false) === 16000, "binary: sample rate network order");
+	assert(view.getUint8(12) === 1, "binary: channels");
+	assert(view.getUint16(13, false) === 30, "binary: frame duration");
+	assert(view.getUint8(15) === 4, "binary: mode byte length");
+	assert(new TextDecoder().decode(bytes.slice(16, 20)) === "chat", "binary: mode");
+	assert(bytes.slice(20).join(",") === "52,18,204,255", "binary: PCM unchanged");
+}
+
+// ---------------------------------------------------------------------------
+// sender format compatibility
+// ---------------------------------------------------------------------------
+
+{
+	globalThis.WebSocket = { OPEN: 1 };
+	const jsonSocket = { readyState: 1, sent: [], send(value) { this.sent.push(value); } };
+	let gatedPayload = null;
+	const jsonSender = new MicFrameSender({
+		webSocket: jsonSocket,
+		shouldSendFrame: (payload) => { gatedPayload = payload; return true; },
+	});
+	jsonSender._sendFrame(new Float32Array(480));
+	assert(typeof jsonSocket.sent[0] === "string", "sender: JSON remains default");
+	assert(typeof gatedPayload.payload.data === "string", "sender: JSON gate keeps base64 payload");
+
+	const binarySocket = { readyState: 1, sent: [], send(value) { this.sent.push(value); } };
+	const binarySender = new MicFrameSender({
+		webSocket: binarySocket,
+		frameFormat: "binary-v1",
+	});
+	binarySender._sendFrame(new Float32Array(480));
+	assert(binarySocket.sent[0] instanceof ArrayBuffer, "sender: binary-v1 sends ArrayBuffer");
+	assert(binarySocket.sent[0].byteLength === 980, "sender: binary frame size");
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 

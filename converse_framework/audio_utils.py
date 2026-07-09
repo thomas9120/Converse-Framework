@@ -15,14 +15,19 @@ import numpy as np
 
 
 SUPPORTED_ENCODING = "pcm_s16le"
+BINARY_AUDIO_MAGIC = b"CF"
+BINARY_AUDIO_VERSION = 1
+BINARY_AUDIO_KIND_MIC = 1
+_BINARY_AUDIO_HEADER = struct.Struct(">2sBBIIBHB")
+BINARY_AUDIO_HEADER_SIZE = _BINARY_AUDIO_HEADER.size
 
 
 @dataclass(frozen=True)
 class AudioFrame:
     """A single parsed frame of mono PCM audio carried over the wire.
 
-    Instances are produced by :func:`parse_audio_frame` from a JSON
-    payload the transport received from a client. ``data`` is the
+    Instances are produced from either JSON/base64 payloads or binary
+    WebSocket packets. ``data`` is the
     raw 16-bit signed little-endian PCM bytes for this frame;
     ``sequence`` is the frame's monotonically increasing index from
     the sender, used by the stats tracker to detect drops; the
@@ -420,6 +425,111 @@ def parse_audio_frame(payload: dict[str, Any], expected: AudioFrameStats) -> Aud
     encoding = str(payload.get("encoding", ""))
     encoded_data = payload.get("data")
 
+    _validate_audio_frame_metadata(
+        sequence=sequence,
+        sample_rate=sample_rate,
+        channels=channels,
+        frame_ms=frame_ms,
+        encoding=encoding,
+        expected=expected,
+    )
+
+    if not isinstance(encoded_data, str) or not encoded_data:
+        raise ValueError("data must be a non-empty base64 string")
+
+    try:
+        data = base64.b64decode(encoded_data, validate=True)
+    except Exception as exc:
+        raise ValueError("data must be valid base64") from exc
+
+    return _make_audio_frame(
+        data=data,
+        sequence=sequence,
+        sample_rate=sample_rate,
+        channels=channels,
+        frame_ms=frame_ms,
+        encoding=encoding,
+    )
+
+
+def parse_binary_audio_frame(
+    packet: bytes | bytearray | memoryview,
+    expected: AudioFrameStats,
+) -> tuple[AudioFrame, str]:
+    """Decode a version-1 binary microphone WebSocket packet.
+
+    The fixed 16-byte header uses network byte order and contains
+    ``CF`` magic bytes, version, message kind, sequence, sample rate,
+    channels, frame duration, and the byte length of an optional UTF-8
+    conversation mode. The mode bytes and raw PCM s16le frame follow.
+
+    A zero-length mode tells the session to use its configured default.
+    JSON control messages and legacy JSON/base64 audio frames remain a
+    separate, fully supported wire format.
+    """
+    data = bytes(packet)
+    if len(data) < BINARY_AUDIO_HEADER_SIZE:
+        raise ValueError(
+            f"binary audio frame is shorter than {BINARY_AUDIO_HEADER_SIZE}-byte header"
+        )
+
+    (
+        magic,
+        version,
+        kind,
+        sequence,
+        sample_rate,
+        channels,
+        frame_ms,
+        mode_length,
+    ) = _BINARY_AUDIO_HEADER.unpack_from(data)
+
+    if magic != BINARY_AUDIO_MAGIC:
+        raise ValueError("invalid binary audio magic")
+    if version != BINARY_AUDIO_VERSION:
+        raise ValueError(f"unsupported binary audio version {version}")
+    if kind != BINARY_AUDIO_KIND_MIC:
+        raise ValueError(f"unsupported binary audio message kind {kind}")
+
+    _validate_audio_frame_metadata(
+        sequence=sequence,
+        sample_rate=sample_rate,
+        channels=channels,
+        frame_ms=frame_ms,
+        encoding=SUPPORTED_ENCODING,
+        expected=expected,
+    )
+
+    payload_offset = BINARY_AUDIO_HEADER_SIZE + mode_length
+    if len(data) < payload_offset:
+        raise ValueError("binary audio frame is truncated in mode field")
+
+    try:
+        mode = data[BINARY_AUDIO_HEADER_SIZE:payload_offset].decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError("binary audio mode must be valid UTF-8") from exc
+
+    frame = _make_audio_frame(
+        data=data[payload_offset:],
+        sequence=sequence,
+        sample_rate=sample_rate,
+        channels=channels,
+        frame_ms=frame_ms,
+        encoding=SUPPORTED_ENCODING,
+    )
+    return frame, mode
+
+
+def _validate_audio_frame_metadata(
+    *,
+    sequence: int,
+    sample_rate: int,
+    channels: int,
+    frame_ms: int,
+    encoding: str,
+    expected: AudioFrameStats,
+) -> None:
+    """Validate frame metadata shared by JSON and binary inputs."""
     if sample_rate != expected.expected_sample_rate:
         raise ValueError(
             f"expected sample_rate {expected.expected_sample_rate}, got {sample_rate}"
@@ -436,13 +546,18 @@ def parse_audio_frame(payload: dict[str, Any], expected: AudioFrameStats) -> Aud
         raise ValueError(f"expected encoding {SUPPORTED_ENCODING}, got {encoding}")
     if sequence < 0:
         raise ValueError("sequence must be a non-negative integer")
-    if not isinstance(encoded_data, str) or not encoded_data:
-        raise ValueError("data must be a non-empty base64 string")
 
-    try:
-        data = base64.b64decode(encoded_data, validate=True)
-    except Exception as exc:
-        raise ValueError("data must be valid base64") from exc
+
+def _make_audio_frame(
+    *,
+    data: bytes,
+    sequence: int,
+    sample_rate: int,
+    channels: int,
+    frame_ms: int,
+    encoding: str,
+) -> AudioFrame:
+    """Validate decoded PCM length and construct an audio frame."""
 
     expected_samples = sample_rate * frame_ms // 1000
     expected_bytes = expected_samples * channels * 2

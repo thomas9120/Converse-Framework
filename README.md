@@ -473,11 +473,35 @@ configurable interval:
     sampleRate: 16000,
     channels: 1,
     frameMs: 30,
+    frameFormat: "binary-v1", // optional; JSON/base64 remains the default
     onLevel: (db) => console.log("mic level", db.toFixed(1)),
   });
   mic.start(); // begins capture after user gesture
 </script>
 ```
+
+Binary microphone packets use a versioned format while control messages and
+outgoing framework events remain JSON. Existing clients need no changes because
+the sender defaults to the original JSON/base64 `audio.frame` envelope.
+
+The binary v1 packet is a 16-byte network-order header, followed by the UTF-8
+mode and raw PCM s16le bytes:
+
+| Bytes | Field |
+| --- | --- |
+| 0–1 | ASCII magic `CF` |
+| 2 | Version (`1`) |
+| 3 | Message kind (`1` for microphone audio) |
+| 4–7 | Unsigned 32-bit frame sequence |
+| 8–11 | Unsigned 32-bit sample rate |
+| 12 | Channel count |
+| 13–14 | Unsigned 16-bit frame duration in milliseconds |
+| 15 | UTF-8 mode byte length |
+| 16… | Mode bytes, then PCM s16le frame bytes |
+
+A zero-length mode uses `WebSocketSessionConfig.default_mode`. The server
+validates the version, packet kind, audio shape, UTF-8 mode, and exact PCM byte
+count before the frame reaches the utterance collector.
 
 A composed client at `converse_framework/js/browser-voice-client.js`
 combines `MicFrameSender`, `TtsAudioPlayer`, and an optional

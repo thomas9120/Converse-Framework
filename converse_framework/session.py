@@ -12,6 +12,8 @@ Apps serve the actual WebSocket endpoint and pass events to
 
 Example usage in a FastAPI endpoint::
 
+    import json
+
     from fastapi import FastAPI, WebSocket
     from converse_framework.transport import Transport
     from converse_framework.session import WebSocketSession, WebSocketSessionConfig
@@ -23,8 +25,14 @@ Example usage in a FastAPI endpoint::
         await websocket.accept()
         transport = _as_transport(websocket)
         session = WebSocketSession(transport)
-        async for message in websocket.iter_json():
-            await session.handle_message(message)
+        while True:
+            packet = await websocket.receive()
+            if packet.get("type") == "websocket.disconnect":
+                break
+            if packet.get("bytes") is not None:
+                await session.handle_message(packet["bytes"])
+            elif packet.get("text") is not None:
+                await session.handle_message(json.loads(packet["text"]))
 """
 
 from __future__ import annotations
@@ -33,7 +41,11 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-from converse_framework.audio_utils import AudioFrameStats, parse_audio_frame
+from converse_framework.audio_utils import (
+    AudioFrameStats,
+    parse_audio_frame,
+    parse_binary_audio_frame,
+)
 from converse_framework.events import FrameworkEvent, TransportEventSink
 from converse_framework.pipeline import PipelineConfig, SpeechPipeline
 from converse_framework.registry import ProviderBundle, build_provider_bundle
@@ -113,8 +125,14 @@ class WebSocketSession:
 
         session = WebSocketSession(transport)
 
-        async for message in websocket.iter_json():
-            await session.handle_message(message)
+        while True:
+            packet = await websocket.receive()
+            if packet.get("type") == "websocket.disconnect":
+                break
+            if packet.get("bytes") is not None:
+                await session.handle_message(packet["bytes"])
+            elif packet.get("text") is not None:
+                await session.handle_message(json.loads(packet["text"]))
     """
 
     def __init__(
@@ -167,12 +185,15 @@ class WebSocketSession:
     # Message routing
     # ------------------------------------------------------------------
 
-    async def handle_message(self, message: dict[str, Any]) -> None:
+    async def handle_message(
+        self, message: dict[str, Any] | bytes | bytearray | memoryview
+    ) -> None:
         """Route one inbound message to the appropriate handler.
 
         Built-in message types:
 
-        * ``audio.frame`` — audio data from the client mic.
+        * Binary v1 packet — raw PCM audio data from the client mic.
+        * ``audio.frame`` — legacy JSON/base64 mic audio data.
         * ``text.turn`` — text input (non-audio path).
         * ``conversation.clear`` — reset conversation history.
         * ``tts.cancel`` — interrupt active TTS playback.
@@ -180,6 +201,10 @@ class WebSocketSession:
         * ``settings.update`` — routed to ``on_settings_update`` hook.
         * ``providers.reload`` — reload providers from ``payload.config``.
         """
+        if isinstance(message, (bytes, bytearray, memoryview)):
+            await self._handle_binary_audio_frame(message)
+            return
+
         message_type = str(message.get("type", ""))
         payload: dict[str, Any] = dict(message.get("payload", {}) or {})
         mode = str(payload.pop("mode", self.config.default_mode))
@@ -306,6 +331,18 @@ class WebSocketSession:
             await self._send_event("audio.frame_error", message=str(exc))
             return
         await self.collector.ingest_frame(frame, mode=mode)
+
+    async def _handle_binary_audio_frame(
+        self, packet: bytes | bytearray | memoryview
+    ) -> None:
+        try:
+            frame, mode = parse_binary_audio_frame(packet, self.frame_stats)
+        except ValueError as exc:
+            await self._send_event("audio.frame_error", message=str(exc))
+            return
+        await self.collector.ingest_frame(
+            frame, mode=mode or self.config.default_mode
+        )
 
     async def _send_event(self, event_type: str, **payload: Any) -> None:
         """Emit a framework event, routing through ``on_event`` hook if set."""

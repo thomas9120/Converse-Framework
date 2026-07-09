@@ -64,7 +64,9 @@ Ranked by impact-per-effort. Mark items off as they land.
 
 ## Tier 2 — moderate effort, real wins
 
-- [ ] **6. Binary WebSocket frames for audio**
+- [x] **6. Binary WebSocket frames for audio**
+  (done: opt-in versioned binary-v1 microphone frames, with legacy JSON/base64
+  remaining the default; binary TTS intentionally deferred as optional)
   - Base64-JSON per 30 ms mic frame costs ~33% bandwidth plus per-frame JSON
     encode/parse on both sides.
   - Accept raw binary WS messages for mic frames (few header bytes for
