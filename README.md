@@ -18,6 +18,7 @@ Provider-agnostic speech stack for speech-to-speech applications.
   - [Browser microphone capture](#browser-microphone-capture-js-reference-client)
   - [Mobile browser microphone testing](#mobile-browser-microphone-testing)
   - [Wrap an external CLI as a provider](#wrap-an-external-cli-as-a-provider)
+  - [OpenAI-compatible LLM endpoints](#openai-compatible-llm-endpoints)
   - [Pocket TTS voice listing and configuration](#pocket-tts-voice-listing-and-configuration)
   - [CUDA DLL helper](#cuda-dll-helper-windows)
 - [Runtime Provider Updates](#runtime-provider-updates)
@@ -49,6 +50,7 @@ pip install converse-framework[faster-whisper]  # faster-whisper ASR
 pip install converse-framework[whisper-cpp]     # whisper.cpp HTTP ASR
 pip install converse-framework[audio-cpp]       # audio.cpp HTTP ASR + TTS
 pip install converse-framework[llamacpp]        # llama.cpp HTTP LLM
+pip install converse-framework[openai-compat]   # OpenAI-compatible LLM (Ollama, LM Studio, vLLM, ...)
 pip install converse-framework[kokoro]          # Kokoro ONNX TTS
 pip install converse-framework[pocket-tts]      # Pocket TTS
 pip install converse-framework[all]             # everything
@@ -100,6 +102,7 @@ own constraints (the table below mirrors the markers in
 | `silero` | 3.11+ | `silero-vad` + `onnxruntime`. No known upper bound. |
 | `faster-whisper` | 3.11+ | The `nvidia-cublas-cu12` wheel pins Windows. |
 | `llamacpp` | 3.11+ | `httpx` itself supports 3.9+, so 3.11+ is the only constraint. |
+| `openai-compat` | 3.11+ | Only needs `httpx`. Talks to any OpenAI-compatible server. |
 | `whisper-cpp` | 3.11+ | Only needs `httpx`, which supports 3.9+. |
 | `audio-cpp` | 3.11+ | Only needs `httpx`. Talks to a user-managed `audiocpp_server`. |
 | `kokoro` | 3.11 to <3.14 | `kokoro-onnx` 0.5.0 requires Python <3.14. The wheel build fails fast on 3.14+. |
@@ -608,6 +611,44 @@ binary of choice, and register it with `register_provider("asr",
 "my-name", "my.module:MySubprocessProvider")`. The example also
 ships a fake-echo script (`--use-fake-echo`) that lets the driver
 run end-to-end in CI without installing any real ASR.
+
+#### OpenAI-compatible LLM endpoints
+
+The `openai-compatible` LLM provider (requires the `openai-compat`
+extra) talks to any server that implements the OpenAI
+`/v1/chat/completions` and `/v1/models` endpoints: Ollama, LM Studio,
+vLLM, llama.cpp, Groq, OpenRouter, Together, and OpenAI itself.
+
+```python
+from converse_framework import build_provider_bundle
+
+bundle = build_provider_bundle(
+    {
+        "vad": {"provider": "mock"},
+        "asr": {"provider": "mock"},
+        "llm": {
+            "provider": "openai-compatible",
+            "base_url": "http://localhost:11434",  # e.g. Ollama; no /v1 suffix
+            "model": "llama3.2",                   # "auto" = first listed model
+            "api_key": "sk-...",                   # optional Bearer token
+        },
+        "tts": {"provider": "mock"},
+    }
+)
+```
+
+`base_url` must not include the `/v1` path segment -- the provider
+appends `/v1/chat/completions` and `/v1/models` itself. `model`
+defaults to `"auto"`, which resolves to the first entry reported by
+`/v1/models`; hosted services list many models, so set it explicitly
+for anything other than a single-model local server.
+
+The provider shares its implementation with the `llamacpp` provider
+(which also accepts `api_key`, matching llama.cpp's `--api-key`
+option). The difference is the status check: `llamacpp` probes the
+llama.cpp-native `/health` endpoint first, while `openai-compatible`
+goes straight to `/v1/models`, which every OpenAI-compatible server
+exposes.
 
 #### Pocket TTS voice listing and configuration
 

@@ -24,6 +24,7 @@ EXTRAS: dict[tuple[str, str], str] = {
     ("asr", "whisper-cpp"): "whisper-cpp",
     ("asr", "audio-cpp"): "audio-cpp",
     ("llm", "llamacpp"): "llamacpp",
+    ("llm", "openai-compatible"): "openai-compat",
     ("tts", "kokoro"): "kokoro",
     ("tts", "kokoro-onnx"): "kokoro",
     ("tts", "pocket-tts"): "pocket-tts",

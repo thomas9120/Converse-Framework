@@ -380,6 +380,15 @@ register_provider(
     "converse_framework.providers.llamacpp:LlamaCppProvider",
     availability_probe=_probe_module("httpx"),
 )
+# Generic OpenAI-compatible chat-completions provider. Covers Ollama,
+# LM Studio, vLLM, Groq, OpenRouter, Together, OpenAI itself, and any
+# other server that implements /v1/chat/completions + /v1/models.
+register_provider(
+    "llm",
+    "openai-compatible",
+    "converse_framework.providers.openai_compat:OpenAICompatLLMProvider",
+    availability_probe=_probe_module("httpx"),
+)
 # ``kokoro`` is the name used in profiles; the implementation lives in
 # ``kokoro_onnx.py`` because that's the model family. ``kokoro-onnx`` is
 # kept as a legacy alias for harness compatibility.

@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **OpenAI-compatible LLM provider** — new `openai-compatible` provider
+  name (extra: `openai-compat`) covering any server that implements
+  `/v1/chat/completions` + `/v1/models`: Ollama, LM Studio, vLLM, Groq,
+  OpenRouter, Together, and OpenAI itself. Shares its implementation
+  with the `llamacpp` provider but skips the llama.cpp-specific
+  `/health` probe.
+- **`api_key` support** — both `llamacpp` and `openai-compatible` LLM
+  providers accept an `api_key` config option, sent as an
+  `Authorization: Bearer` header (matches llama.cpp's `--api-key`).
+- **Persistent LLM connection** — `stream_response` reuses one
+  `httpx.AsyncClient` across turns instead of reconnecting per turn;
+  the client is closed by `unload()`.
+- **Sampler merge fix** — sampler-provider overrides are now merged over
+  the constructor defaults instead of replacing them, so returning only
+  e.g. `{"top_p": 0.9}` no longer drops `temperature` / `max_tokens`.
+- Fixed a dead `import httpx` check in the llamacpp `probe_status`.
+
 ## v0.2.0 — Provider lifecycle, session helper, and browser mic support
 
 ### Highlights
