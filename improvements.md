@@ -54,7 +54,9 @@ Ranked by impact-per-effort. Mark items off as they land.
   - All timestamps already exist inside the pipeline; this is bookkeeping.
   - Payoff: makes the latency story measurable — prerequisite to improving it.
 
-- [ ] **5. CI test workflow**
+- [x] **5. CI test workflow**
+  (done: `.github/workflows/tests.yml` runs pytest on Python 3.11, 3.12, and
+  3.13 for pushes and pull requests; status badge added to the README)
   - `.github/workflows/publish.yml` exists but nothing runs pytest on push.
   - Add a test workflow with a Python 3.11 / 3.12 / 3.13 matrix (~25 lines of
     YAML). Optionally add a status badge to the README.

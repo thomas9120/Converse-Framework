@@ -1,5 +1,7 @@
 # Converse Framework
 
+[![Tests](https://github.com/thomas9120/Converse-Framework/actions/workflows/tests.yml/badge.svg)](https://github.com/thomas9120/Converse-Framework/actions/workflows/tests.yml)
+
 Provider-agnostic speech stack for speech-to-speech applications.
 
 ## Table of Contents
