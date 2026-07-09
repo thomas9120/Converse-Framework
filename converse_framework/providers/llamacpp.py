@@ -34,6 +34,9 @@ class LlamaCppProvider(LLMProvider):
         self.max_tokens = int(config.get("max_tokens", 256))
         self._sampler_provider: SamplerProvider | None = None
         self._resolved_model: str | None = None
+        # Persistent client for streaming turns so consecutive turns
+        # reuse the TCP connection. Created lazily; closed in unload().
+        self._stream_client: object | None = None
 
     def set_sampler_provider(self, provider: SamplerProvider | None) -> None:
         """Inject a callable that returns the current sampler overrides.
@@ -64,7 +67,7 @@ class LlamaCppProvider(LLMProvider):
     async def probe_status(self) -> ProviderStatus:
         """Cheap probe: check httpx is importable; no HTTP call."""
         try:
-            pass  # type: ignore[import-not-found]
+            import httpx  # type: ignore[import-not-found]  # noqa: F401
         except Exception as exc:  # pragma: no cover - import path
             return ProviderStatus(
                 name="llama.cpp",
@@ -202,32 +205,37 @@ class LlamaCppProvider(LLMProvider):
         for key, value in sampler.items():
             payload[key] = value
         url = f"{self.base_url}/v1/chat/completions"
+        client = self._ensure_stream_client()
         try:
-            import httpx  # type: ignore[import-not-found]
-        except Exception as exc:  # pragma: no cover - import path
-            raise RuntimeError(
-                "llama.cpp provider requires httpx; install with "
-                "pip install 'converse-framework[llamacpp]'."
-            ) from exc
-        timeout = httpx.Timeout(connect=3.0, read=60.0, write=10.0, pool=3.0)
-        try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                async with client.stream("POST", url, json=payload) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data = line[6:].strip()
-                        if data == "[DONE]":
-                            break
-                        chunk = json.loads(data)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
-                        content = delta.get("content")
-                        if content:
-                            yield content
+            async with client.stream("POST", url, json=payload) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:].strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = json.loads(data)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content")
+                    if content:
+                        yield content
         except Exception:
             self._resolved_model = None
             raise
+
+    def _ensure_stream_client(self):
+        if self._stream_client is None:
+            try:
+                import httpx  # type: ignore[import-not-found]
+            except Exception as exc:  # pragma: no cover - import path
+                raise RuntimeError(
+                    "llama.cpp provider requires httpx; install with "
+                    "pip install 'converse-framework[llamacpp]'."
+                ) from exc
+            timeout = httpx.Timeout(connect=3.0, read=60.0, write=10.0, pool=3.0)
+            self._stream_client = httpx.AsyncClient(timeout=timeout)
+        return self._stream_client
 
     def _build_sampler(self) -> dict:
         defaults = {
@@ -235,7 +243,10 @@ class LlamaCppProvider(LLMProvider):
             "max_tokens": self.max_tokens,
         }
         if self._sampler_provider is not None:
-            return self._sampler_provider()
+            # Overrides are merged over the constructor defaults so a
+            # provider that returns only e.g. {"top_p": 0.9} does not
+            # silently drop temperature / max_tokens.
+            return {**defaults, **self._sampler_provider()}
         return defaults
 
     async def _resolve_model(self) -> str:
@@ -261,4 +272,8 @@ class LlamaCppProvider(LLMProvider):
         return str(model_data[0].get("id", "unknown"))
 
     async def unload(self) -> ProviderStatus:
+        client = self._stream_client
+        self._stream_client = None
+        if client is not None:
+            await client.aclose()  # type: ignore[attr-defined]
         return self.status

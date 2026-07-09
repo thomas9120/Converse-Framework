@@ -52,7 +52,7 @@ import asyncio
 import base64
 import sys
 
-from converse_framework.audio_utils import AudioFrame, AudioFrameStats, parse_audio_frame
+from converse_framework.audio_utils import AudioFrameStats, parse_audio_frame
 from converse_framework.events import QueueEventSink
 from converse_framework.pipeline import PipelineConfig, SpeechPipeline
 from converse_framework.registry import build_provider_bundle

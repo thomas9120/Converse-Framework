@@ -343,8 +343,6 @@ class SpeechPipeline:
             "turn.started", mode=turn_mode, source="continue", turn_id=turn_id
         )
         prefix = turn_state.messages[-1]["content"]
-        turn_state.messages.pop()
-        turn_state.messages.append({"role": "assistant", "content": prefix})
 
         try:
             response_text = await self._stream_llm_and_tts(
