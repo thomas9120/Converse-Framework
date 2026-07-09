@@ -127,7 +127,9 @@ class TestAddNvidiaDllDirectories:
             added.append(path)
             return object()  # unique handle
 
-        monkeypatch.setattr(os, "add_dll_directory", fake_add_dll_directory)
+        monkeypatch.setattr(
+            os, "add_dll_directory", fake_add_dll_directory, raising=False
+        )
 
         handles = cuda_utils.add_nvidia_dll_directories()
 
@@ -145,7 +147,7 @@ class TestAddNvidiaDllDirectories:
         def failing_add(path: str) -> object:
             raise OSError(f"permission denied: {path}")
 
-        monkeypatch.setattr(os, "add_dll_directory", failing_add)
+        monkeypatch.setattr(os, "add_dll_directory", failing_add, raising=False)
 
         # Should not raise — returns empty list
         handles = cuda_utils.add_nvidia_dll_directories()
