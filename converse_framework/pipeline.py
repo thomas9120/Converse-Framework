@@ -43,6 +43,15 @@ class PipelineConfig:
             buffers are held back until a sentence boundary is
             seen or ``tts_chunk_chars`` is reached. ``0`` disables
             the lower bound.
+        first_chunk_chars: Soft character limit for the *first* TTS
+            flush of a turn. A lower threshold than
+            ``tts_chunk_chars`` lets synthesis start as soon as the
+            opening clause is available, which cuts perceived
+            time-to-first-audio; subsequent flushes revert to the
+            normal thresholds. The first flush also triggers on a
+            comma (clause boundary), still respecting
+            ``min_tts_chars``. ``0`` disables the eager first flush
+            entirely.
         default_mode: Conversation mode used when callers do not
             pass an explicit ``mode=`` argument. The framework
             treats modes as opaque string keys; ``"chat"`` is the
@@ -51,6 +60,7 @@ class PipelineConfig:
 
     tts_chunk_chars: int = 120
     min_tts_chars: int = 0
+    first_chunk_chars: int = 40
     default_mode: str = "chat"
 
 
@@ -108,14 +118,23 @@ class SpeechPipeline:
         self.config = config or PipelineConfig()
         self.tts_chunk_chars = self.config.tts_chunk_chars
         self.min_tts_chars = self.config.min_tts_chars
+        self.first_chunk_chars = self.config.first_chunk_chars
         self._default_mode = self.config.default_mode
         self._system_prompt_builder = system_prompt_builder
         self._states: dict[str, _TurnState] = {self._default_mode: _TurnState()}
         self.state = self._states[self._default_mode]
 
-    def update_turn_config(self, *, tts_chunk_chars: int, min_tts_chars: int) -> None:
+    def update_turn_config(
+        self,
+        *,
+        tts_chunk_chars: int,
+        min_tts_chars: int,
+        first_chunk_chars: int | None = None,
+    ) -> None:
         self.tts_chunk_chars = tts_chunk_chars
         self.min_tts_chars = min_tts_chars
+        if first_chunk_chars is not None:
+            self.first_chunk_chars = first_chunk_chars
 
     async def update_providers(
         self,
@@ -425,6 +444,7 @@ class SpeechPipeline:
     ) -> str:
         first_token_seen = False
         sentence_buffer = ""
+        first_flush_done = False
         async for token in self.providers.llm.stream_response(
             self._llm_messages(turn_state, turn_mode)
         ):
@@ -439,13 +459,21 @@ class SpeechPipeline:
                 "llm.token", mode=turn_mode, text=token, accumulated=response_text
             )
 
-            if should_flush_tts(
-                sentence_buffer, self.tts_chunk_chars, self.min_tts_chars
-            ):
+            # The first flush of a turn uses the lower eager threshold
+            # (and flushes on clause boundaries) so the voice starts as
+            # soon as the opening clause is available.
+            eager = not first_flush_done and self.first_chunk_chars > 0
+            limit = (
+                min(self.first_chunk_chars, self.tts_chunk_chars)
+                if eager
+                else self.tts_chunk_chars
+            )
+            if should_flush_tts(sentence_buffer, limit, self.min_tts_chars, eager=eager):
                 await self._start_tts_chunk(
                     sentence_buffer.strip(), started, turn_id, turn_state, turn_mode
                 )
                 sentence_buffer = ""
+                first_flush_done = True
 
         if sentence_buffer.strip():
             await self._start_tts_chunk(
@@ -607,7 +635,17 @@ def exception_payload(exc: Exception, *, fallback: str) -> dict[str, str]:
     }
 
 
-def should_flush_tts(text: str, limit: int, minimum: int = 0) -> bool:
+def should_flush_tts(
+    text: str, limit: int, minimum: int = 0, *, eager: bool = False
+) -> bool:
+    """Decide whether the buffered LLM text should be handed to TTS.
+
+    Flushes when the buffer reaches *limit* characters or ends on
+    sentence punctuation (subject to the *minimum* lower bound). With
+    ``eager=True`` -- used for the first chunk of a turn -- a comma
+    also counts as a flush boundary so synthesis can start on the
+    opening clause.
+    """
     stripped = text.strip()
     if not stripped:
         return False
@@ -615,4 +653,6 @@ def should_flush_tts(text: str, limit: int, minimum: int = 0) -> bool:
         return True
     if len(stripped) < minimum:
         return False
+    if eager and stripped.endswith(","):
+        return True
     return stripped.endswith((".", "!", "?", ";", ":"))

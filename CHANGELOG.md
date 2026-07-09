@@ -16,6 +16,14 @@
 - **`api_key` support** — both `llamacpp` and `openai-compatible` LLM
   providers accept an `api_key` config option, sent as an
   `Authorization: Bearer` header (matches llama.cpp's `--api-key`).
+- **Eager first TTS chunk** — new `PipelineConfig.first_chunk_chars`
+  (default `40`) applies a lower flush threshold to the *first* TTS
+  chunk of each turn and also flushes on a comma, so the voice starts
+  as soon as the opening clause is available. Subsequent chunks use
+  the normal `tts_chunk_chars` thresholds. Set to `0` to restore the
+  previous single-threshold behaviour.
+  `SpeechPipeline.update_turn_config` accepts an optional
+  `first_chunk_chars` argument.
 - **Persistent LLM connection** — `stream_response` reuses one
   `httpx.AsyncClient` across turns instead of reconnecting per turn;
   the client is closed by `unload()`.

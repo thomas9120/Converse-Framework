@@ -105,6 +105,109 @@ def test_should_flush_tts_on_sentence_or_limit():
     assert should_flush_tts("This sentence is long enough.", 120, 20)
 
 
+def test_should_flush_tts_eager_adds_clause_boundary():
+    # A comma is a flush boundary only in eager mode.
+    assert should_flush_tts("Well hello there,", 120, eager=True)
+    assert not should_flush_tts("Well hello there,", 120)
+    # Eager mode still respects the hard minimum.
+    assert not should_flush_tts("Hi,", 120, 20, eager=True)
+    # Non-boundary text does not flush in eager mode either.
+    assert not should_flush_tts("still speaking", 120, eager=True)
+
+
+def test_first_tts_chunk_flushes_on_opening_clause():
+    async def run_turn():
+        queue = asyncio.Queue()
+        bundle = mock_bundle()
+        bundle.llm = RecordingLLM(tokens=["Sure, ", "let me look into that for you."])
+        pipeline = SpeechPipeline(
+            bundle,
+            QueueEventSink(queue),
+            PipelineConfig(tts_chunk_chars=120, first_chunk_chars=40),
+        )
+
+        await pipeline.handle_text_turn("hello")
+        await asyncio.sleep(0.05)
+        return [event for event in drain(queue) if event["type"] == "tts.audio"]
+
+    audio_events = asyncio.run(run_turn())
+
+    # The opening clause is flushed on the comma; the rest follows.
+    assert len(audio_events) == 2
+    assert audio_events[0]["payload"]["text"] == "Sure,"
+    assert audio_events[1]["payload"]["text"] == "let me look into that for you."
+
+
+def test_first_chunk_chars_zero_disables_eager_flush():
+    async def run_turn():
+        queue = asyncio.Queue()
+        bundle = mock_bundle()
+        bundle.llm = RecordingLLM(tokens=["Sure, ", "let me look into that for you."])
+        pipeline = SpeechPipeline(
+            bundle,
+            QueueEventSink(queue),
+            PipelineConfig(tts_chunk_chars=120, first_chunk_chars=0),
+        )
+
+        await pipeline.handle_text_turn("hello")
+        await asyncio.sleep(0.05)
+        return [event for event in drain(queue) if event["type"] == "tts.audio"]
+
+    audio_events = asyncio.run(run_turn())
+
+    # Without eager mode the whole sentence arrives as one flush.
+    assert len(audio_events) == 1
+    assert (
+        audio_events[0]["payload"]["text"]
+        == "Sure, let me look into that for you."
+    )
+
+
+def test_eager_threshold_applies_only_to_first_chunk():
+    async def run_turn():
+        queue = asyncio.Queue()
+        bundle = mock_bundle()
+        # Second and third clauses also end with commas; only the first
+        # may flush on one.
+        bundle.llm = RecordingLLM(
+            tokens=["First, ", "second clause, ", "third clause ends here."]
+        )
+        pipeline = SpeechPipeline(
+            bundle,
+            QueueEventSink(queue),
+            PipelineConfig(tts_chunk_chars=120, first_chunk_chars=40),
+        )
+
+        await pipeline.handle_text_turn("hello")
+        await asyncio.sleep(0.05)
+        return [event for event in drain(queue) if event["type"] == "tts.audio"]
+
+    audio_events = asyncio.run(run_turn())
+
+    assert len(audio_events) == 2
+    assert audio_events[0]["payload"]["text"] == "First,"
+    assert (
+        audio_events[1]["payload"]["text"]
+        == "second clause, third clause ends here."
+    )
+
+
+def test_update_turn_config_can_change_first_chunk_chars():
+    pipeline = SpeechPipeline(
+        mock_bundle(), QueueEventSink(asyncio.Queue()), PipelineConfig()
+    )
+    assert pipeline.first_chunk_chars == 40
+
+    # Omitting first_chunk_chars keeps the current value.
+    pipeline.update_turn_config(tts_chunk_chars=100, min_tts_chars=10)
+    assert pipeline.first_chunk_chars == 40
+
+    pipeline.update_turn_config(
+        tts_chunk_chars=100, min_tts_chars=10, first_chunk_chars=0
+    )
+    assert pipeline.first_chunk_chars == 0
+
+
 def test_text_turn_with_mock_providers_emits_core_events():
     async def run_turn():
         queue = asyncio.Queue()

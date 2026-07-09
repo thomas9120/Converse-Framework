@@ -32,7 +32,10 @@ Ranked by impact-per-effort. Mark items off as they land.
   - Payoff: local-first stays the default; cloud becomes possible. Removes the
     "local-only catalog" adoption objection.
 
-- [ ] **3. Eager first TTS chunk (time-to-first-audio)**
+- [x] **3. Eager first TTS chunk (time-to-first-audio)**
+  (done: `PipelineConfig.first_chunk_chars` (default 40, `0` disables),
+  eager comma-boundary flush in `should_flush_tts`, first-flush tracking in
+  `_stream_llm_and_tts`, tests in `tests/test_pipeline.py`)
   - `should_flush_tts` (`converse_framework/pipeline.py`) uses one threshold
     (`tts_chunk_chars=120` or sentence punctuation) for every chunk.
   - Add a `first_chunk_chars` field to `PipelineConfig` with a much lower
