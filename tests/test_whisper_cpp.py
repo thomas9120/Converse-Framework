@@ -93,9 +93,6 @@ def test_transcribe_text_input_yields_single_final_event():
     pytest.importorskip("httpx")
     provider = _wprovider({})
 
-    async def run():
-        events = [event async for event in provider.transcribe_text_input("hi")]
-
     events = asyncio.run(_collect(provider.transcribe_text_input("hello world")))
     assert len(events) == 1
     assert events[0].final is True

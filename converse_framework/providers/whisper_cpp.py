@@ -108,7 +108,7 @@ class WhisperCppASRProvider(ASRProvider):
     async def probe_status(self) -> ProviderStatus:
         """Cheap probe: check httpx import; no HTTP call."""
         try:
-            pass  # type: ignore[import-not-found]
+            import httpx  # type: ignore[import-not-found]  # noqa: F401
         except Exception as exc:  # pragma: no cover - import path
             self._last_error = self._missing_dep_message(exc)
             return self.status

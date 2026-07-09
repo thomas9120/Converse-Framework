@@ -1,9 +1,9 @@
 """FastAPI WebSocket voice-chat recipe.
 
-This example shows the browser-oriented wire shape: clients send JSON
-messages containing ``audio.frame`` payloads, the framework validates
-them with :func:`parse_audio_frame`, and all framework events are sent
-back over the same WebSocket.
+This example accepts either versioned binary microphone packets or legacy
+JSON messages containing ``audio.frame`` payloads. The framework validates
+both formats, while control messages and all outgoing framework events stay
+JSON.
 
 FastAPI is imported only by :func:`create_app`, so importing this module
 does not add a dependency to the base framework package. To run it::
@@ -36,10 +36,15 @@ real app.
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any
 
-from converse_framework.audio_utils import AudioFrameStats, parse_audio_frame
+from converse_framework.audio_utils import (
+    AudioFrameStats,
+    parse_audio_frame,
+    parse_binary_audio_frame,
+)
 from converse_framework.events import FrameworkEvent, TransportEventSink
 from converse_framework.pipeline import PipelineConfig, SpeechPipeline
 from converse_framework.registry import build_provider_bundle
@@ -120,9 +125,20 @@ def build_websocket_voice_runtime(
 async def handle_websocket_message(
     runtime: WebSocketVoiceRuntime,
     transport: Transport,
-    message: dict[str, Any],
+    message: dict[str, Any] | bytes | bytearray | memoryview,
 ) -> None:
     """Handle one client message from the WebSocket recipe."""
+    if isinstance(message, (bytes, bytearray, memoryview)):
+        try:
+            frame, mode = parse_binary_audio_frame(message, runtime.frame_stats)
+        except ValueError as exc:
+            await transport.send_event(
+                FrameworkEvent("audio.frame_error", {"message": str(exc)})
+            )
+            return
+        await runtime.collector.ingest_frame(frame, mode=mode or "chat")
+        return
+
     message_type = str(message.get("type", ""))
     payload = dict(message.get("payload", {}) or {})
     mode = str(payload.pop("mode", "chat"))
@@ -167,7 +183,31 @@ def create_app():
         transport = WebSocketTransport(websocket)
         runtime = build_websocket_voice_runtime(transport)
         while True:
-            message = await websocket.receive_json()
+            packet = await websocket.receive()
+            if packet.get("type") == "websocket.disconnect":
+                break
+            if packet.get("bytes") is not None:
+                message = packet["bytes"]
+            elif packet.get("text") is not None:
+                try:
+                    message = json.loads(packet["text"])
+                except (json.JSONDecodeError, TypeError):
+                    await transport.send_event(
+                        FrameworkEvent(
+                            "turn.error", {"message": "invalid JSON WebSocket message"}
+                        )
+                    )
+                    continue
+                if not isinstance(message, dict):
+                    await transport.send_event(
+                        FrameworkEvent(
+                            "turn.error",
+                            {"message": "JSON WebSocket message must be an object"},
+                        )
+                    )
+                    continue
+            else:
+                continue
             await handle_websocket_message(runtime, transport, message)
             await asyncio.sleep(0)
 

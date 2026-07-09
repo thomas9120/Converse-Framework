@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "converse-framework"
-version = "0.2.3"
+version = "0.3.0"
 description = "Provider-agnostic speech stack for speech-to-speech applications"
 readme = "README.md"
 license = { text = "MIT" }
@@ -17,6 +17,7 @@ dependencies = ["numpy>=2.0"]
 #   silero      : 3.11+           (silero-vad + onnxruntime have no known upper bound)
 #   faster-whisper : 3.11+        (faster-whisper; the cu12 wheel pins the platform)
 #   llamacpp    : 3.11+           (httpx supports 3.9+)
+#   openai-compat : 3.11+         (httpx supports 3.9+)
 #   whisper-cpp : 3.11+           (httpx supports 3.9+)
 #   kokoro      : 3.11 .. <3.14   (kokoro-onnx 0.5.0 requires Python <3.14)
 #   pocket-tts  : 3.11+           (no known upper bound)
@@ -29,6 +30,7 @@ faster-whisper = [
   "nvidia-cublas-cu12; platform_system == 'Windows'",
 ]
 llamacpp = ["httpx>=0.28"]
+openai-compat = ["httpx>=0.28"]
 whisper-cpp = ["httpx>=0.28"]
 audio-cpp = ["httpx>=0.28"]
 # kokoro-onnx 0.5.0 requires Python <3.14; on 3.14+ the wheel build will fail
@@ -36,9 +38,9 @@ audio-cpp = ["httpx>=0.28"]
 kokoro = ["kokoro-onnx>=0.5; python_version < '3.14'", "misaki>=0.7"]
 pocket-tts = ["pocket-tts>=2.1"]
 all-vad = ["converse-framework[silero]"]
-all-asr = ["converse-framework[faster-whisper,whisper-cpp,audio-cpp]"]
-all-llm = ["converse-framework[llamacpp]"]
-all-tts = ["converse-framework[kokoro,pocket-tts,audio-cpp]"]
+all-asr = ["converse-framework[faster-whisper,whisper-cpp,audio-cpp,openai-compat]"]
+all-llm = ["converse-framework[llamacpp,openai-compat]"]
+all-tts = ["converse-framework[kokoro,pocket-tts,audio-cpp,openai-compat]"]
 all = ["converse-framework[all-vad,all-asr,all-llm,all-tts]"]
 
 [tool.hatch.build.targets.wheel]

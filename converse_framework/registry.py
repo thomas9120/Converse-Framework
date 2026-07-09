@@ -380,6 +380,29 @@ register_provider(
     "converse_framework.providers.llamacpp:LlamaCppProvider",
     availability_probe=_probe_module("httpx"),
 )
+# Generic OpenAI-compatible providers. The LLM variant covers Ollama,
+# LM Studio, vLLM, Groq, OpenRouter, Together, OpenAI itself, and any
+# other server that implements /v1/chat/completions + /v1/models. The
+# ASR variant talks to /v1/audio/transcriptions (multipart WAV upload)
+# and the TTS variant to /v1/audio/speech (WAV response).
+register_provider(
+    "llm",
+    "openai-compatible",
+    "converse_framework.providers.openai_compat:OpenAICompatLLMProvider",
+    availability_probe=_probe_module("httpx"),
+)
+register_provider(
+    "asr",
+    "openai-compatible",
+    "converse_framework.providers.openai_compat:OpenAICompatASRProvider",
+    availability_probe=_probe_module("httpx"),
+)
+register_provider(
+    "tts",
+    "openai-compatible",
+    "converse_framework.providers.openai_compat:OpenAICompatTTSProvider",
+    availability_probe=_probe_module("httpx"),
+)
 # ``kokoro`` is the name used in profiles; the implementation lives in
 # ``kokoro_onnx.py`` because that's the model family. ``kokoro-onnx`` is
 # kept as a legacy alias for harness compatibility.

@@ -9,6 +9,7 @@ parser's provider-override handling.
 from __future__ import annotations
 
 import asyncio
+import struct
 import sys
 
 import pytest
@@ -259,6 +260,42 @@ def test_websocket_voice_handler_emits_audio_frame_error():
     assert len(events) == 1
     assert events[0].type == "audio.frame_error"
     assert "sample_rate" in events[0].payload["message"]
+
+
+def test_websocket_voice_handler_accepts_binary_audio_frame():
+    from unittest.mock import AsyncMock
+
+    from converse_framework.examples.websocket_voice_chat import (
+        build_websocket_voice_runtime,
+        handle_websocket_message,
+    )
+
+    class FakeTransport:
+        async def send_event(self, event):
+            raise AssertionError(f"unexpected event: {event}")
+
+        async def receive_event(self):
+            raise NotImplementedError
+
+    async def run():
+        transport = FakeTransport()
+        runtime = build_websocket_voice_runtime(transport)  # type: ignore[arg-type]
+        runtime.collector.ingest_frame = AsyncMock()  # type: ignore[method-assign]
+        mode = b"voice"
+        packet = (
+            struct.pack(">2sBBIIBHB", b"CF", 1, 1, 9, 16000, 1, 30, len(mode))
+            + mode
+            + (b"\x00\x00" * 480)
+        )
+        await handle_websocket_message(
+            runtime, transport, packet  # type: ignore[arg-type]
+        )
+        return runtime.collector.ingest_frame
+
+    ingest = asyncio.run(run())
+    ingest.assert_awaited_once()
+    assert ingest.await_args.args[0].sequence == 9
+    assert ingest.await_args.kwargs == {"mode": "voice"}
 
 
 def test_websocket_transport_sends_and_receives_json():

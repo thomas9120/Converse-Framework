@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -29,6 +31,14 @@ class FakeTransport:
 
     async def receive_event(self) -> FrameworkEvent:
         return FrameworkEvent("dummy", {})
+
+
+def make_binary_audio_packet(*, mode: str = "chat", sequence: int = 0) -> bytes:
+    mode_bytes = mode.encode("utf-8")
+    header = struct.pack(
+        ">2sBBIIBHB", b"CF", 1, 1, sequence, 16000, 1, 30, len(mode_bytes)
+    )
+    return header + mode_bytes + (b"\x00\x00" * 480)
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +187,39 @@ async def test_audio_frame_error_on_bad_payload():
     assert len(transport.sent) == 1
     assert transport.sent[0].type == "audio.frame_error"
     assert "sample_rate" in transport.sent[0].payload["message"]
+
+
+@pytest.mark.asyncio
+async def test_binary_audio_frame_routes_to_collector_with_mode():
+    transport = FakeTransport()
+    session = WebSocketSession(transport)  # type: ignore[arg-type]
+    session.collector.ingest_frame = AsyncMock()  # type: ignore[method-assign]
+
+    await session.handle_message(make_binary_audio_packet(mode="voice", sequence=7))
+
+    session.collector.ingest_frame.assert_awaited_once()  # type: ignore[attr-defined]
+    ingest_call = session.collector.ingest_frame.await_args  # type: ignore[attr-defined]
+    frame = ingest_call.args[0]
+    assert frame.sequence == 7
+    assert len(frame.data) == 960
+    assert ingest_call.kwargs == {"mode": "voice"}
+
+
+@pytest.mark.asyncio
+async def test_binary_audio_frame_uses_default_mode_and_reports_errors():
+    transport = FakeTransport()
+    session = WebSocketSession(
+        transport, config=WebSocketSessionConfig(default_mode="custom")
+    )  # type: ignore[arg-type]
+    session.collector.ingest_frame = AsyncMock()  # type: ignore[method-assign]
+
+    await session.handle_message(make_binary_audio_packet(mode=""))
+    ingest_call = session.collector.ingest_frame.await_args  # type: ignore[attr-defined]
+    assert ingest_call.kwargs["mode"] == "custom"
+
+    await session.handle_message(b"bad")
+    assert transport.sent[-1].type == "audio.frame_error"
+    assert "header" in transport.sent[-1].payload["message"]
 
 
 @pytest.mark.asyncio

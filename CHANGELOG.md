@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+- **OpenAI-compatible providers (LLM, ASR, TTS)** — new
+  `openai-compatible` provider name (extra: `openai-compat`) registered
+  for all three inference kinds. LLM covers any
+  `/v1/chat/completions` + `/v1/models` server (Ollama, LM Studio,
+  vLLM, Groq, OpenRouter, Together, OpenAI itself) and shares its
+  implementation with the `llamacpp` provider but skips the
+  llama.cpp-specific `/health` probe. ASR uploads a multipart WAV to
+  `/v1/audio/transcriptions` (OpenAI Whisper, Groq hosted Whisper,
+  `speaches` / faster-whisper-server). TTS requests WAV from
+  `/v1/audio/speech` and yields a single final PCM chunk (OpenAI TTS,
+  Kokoro-FastAPI, openedai-speech).
+- **`api_key` support** — both `llamacpp` and `openai-compatible` LLM
+  providers accept an `api_key` config option, sent as an
+  `Authorization: Bearer` header (matches llama.cpp's `--api-key`).
+- **Eager first TTS chunk** — new `PipelineConfig.first_chunk_chars`
+  (default `40`) applies a lower flush threshold to the *first* TTS
+  chunk of each turn and also flushes on a comma, so the voice starts
+  as soon as the opening clause is available. Subsequent chunks use
+  the normal `tts_chunk_chars` thresholds. Set to `0` to restore the
+  previous single-threshold behaviour.
+  `SpeechPipeline.update_turn_config` accepts an optional
+  `first_chunk_chars` argument.
+- **Turn latency summary** — every turn now emits `turn.metrics`
+  immediately before `turn.finished`, carrying `asr_ms`,
+  `llm_first_token_ms`, `tts_first_chunk_ms`, and `total_ms`. Stages that
+  were not reached are reported as `null`.
+- **Binary microphone frames** — `WebSocketSession` and the FastAPI recipe
+  accept versioned binary-v1 PCM packets. `MicFrameSender` enables them with
+  `frameFormat: "binary-v1"`; legacy JSON/base64 frames remain the default.
+  Outgoing `tts.audio` events remain JSON/base64.
+- **Continuous integration** — pushes and pull requests run pytest on Python
+  3.11, 3.12, and 3.13, plus the browser-helper tests under Node.js.
+- **Persistent LLM connection** — `stream_response` reuses one
+  `httpx.AsyncClient` across turns instead of reconnecting per turn;
+  the client is closed by `unload()`.
+- **Sampler merge fix** — sampler-provider overrides are now merged over
+  the constructor defaults instead of replacing them, so returning only
+  e.g. `{"top_p": 0.9}` no longer drops `temperature` / `max_tokens`.
+- Fixed dead `import httpx` checks in the llamacpp and whisper-cpp
+  `probe_status` methods.
+
 ## v0.2.0 — Provider lifecycle, session helper, and browser mic support
 
 ### Highlights

@@ -43,6 +43,15 @@ class PipelineConfig:
             buffers are held back until a sentence boundary is
             seen or ``tts_chunk_chars`` is reached. ``0`` disables
             the lower bound.
+        first_chunk_chars: Soft character limit for the *first* TTS
+            flush of a turn. A lower threshold than
+            ``tts_chunk_chars`` lets synthesis start as soon as the
+            opening clause is available, which cuts perceived
+            time-to-first-audio; subsequent flushes revert to the
+            normal thresholds. The first flush also triggers on a
+            comma (clause boundary), still respecting
+            ``min_tts_chars``. ``0`` disables the eager first flush
+            entirely.
         default_mode: Conversation mode used when callers do not
             pass an explicit ``mode=`` argument. The framework
             treats modes as opaque string keys; ``"chat"`` is the
@@ -51,6 +60,7 @@ class PipelineConfig:
 
     tts_chunk_chars: int = 120
     min_tts_chars: int = 0
+    first_chunk_chars: int = 40
     default_mode: str = "chat"
 
 
@@ -61,6 +71,17 @@ class _TurnState:
     system_prompt: str = ""
     turn_id: int = 0
     tts_tail: asyncio.Task | None = None
+
+
+@dataclass
+class _TurnMetrics:
+    """Turn-relative latency checkpoints used by ``turn.metrics``."""
+
+    started: float
+    turn_id: int
+    asr_ms: int | None = None
+    llm_first_token_ms: int | None = None
+    tts_first_chunk_ms: int | None = None
 
 
 class SpeechPipeline:
@@ -108,14 +129,23 @@ class SpeechPipeline:
         self.config = config or PipelineConfig()
         self.tts_chunk_chars = self.config.tts_chunk_chars
         self.min_tts_chars = self.config.min_tts_chars
+        self.first_chunk_chars = self.config.first_chunk_chars
         self._default_mode = self.config.default_mode
         self._system_prompt_builder = system_prompt_builder
         self._states: dict[str, _TurnState] = {self._default_mode: _TurnState()}
         self.state = self._states[self._default_mode]
 
-    def update_turn_config(self, *, tts_chunk_chars: int, min_tts_chars: int) -> None:
+    def update_turn_config(
+        self,
+        *,
+        tts_chunk_chars: int,
+        min_tts_chars: int,
+        first_chunk_chars: int | None = None,
+    ) -> None:
         self.tts_chunk_chars = tts_chunk_chars
         self.min_tts_chars = min_tts_chars
+        if first_chunk_chars is not None:
+            self.first_chunk_chars = first_chunk_chars
 
     async def update_providers(
         self,
@@ -192,6 +222,7 @@ class SpeechPipeline:
         turn_mode = self._mode
         started = time.perf_counter()
         turn_id = self._next_turn_id(turn_state)
+        metrics = _TurnMetrics(started=started, turn_id=turn_id)
         await self.cancel_tts("new_user_turn")
         await self.sink.emit("turn.started", mode=turn_mode, turn_id=turn_id)
         await self.sink.emit(
@@ -209,6 +240,7 @@ class SpeechPipeline:
             )
             if transcript.final:
                 final_transcript = transcript.text
+                metrics.asr_ms = elapsed_ms(started)
 
         await self.sink.emit(
             "vad.speech_end",
@@ -218,13 +250,15 @@ class SpeechPipeline:
             latency_ms=elapsed_ms(started),
         )
         if not final_transcript:
-            await self.sink.emit(
-                "turn.finished", mode=turn_mode, reason="empty_transcript"
+            if metrics.asr_ms is None:
+                metrics.asr_ms = elapsed_ms(started)
+            await self._emit_turn_finished(
+                metrics, turn_mode, reason="empty_transcript"
             )
             return
 
         await self._respond_to_transcript(
-            final_transcript, started, turn_id, turn_state, turn_mode
+            final_transcript, metrics, turn_state, turn_mode
         )
 
     async def handle_audio_turn(
@@ -235,6 +269,7 @@ class SpeechPipeline:
         turn_mode = self._mode
         started = time.perf_counter()
         turn_id = self._next_turn_id(turn_state)
+        metrics = _TurnMetrics(started=started, turn_id=turn_id)
         await self.cancel_tts("new_audio_turn")
         await self.sink.emit(
             "turn.started", mode=turn_mode, source="audio", turn_id=turn_id
@@ -290,8 +325,10 @@ class SpeechPipeline:
                 )
                 if transcript.final:
                     final_transcript = transcript.text
+                    metrics.asr_ms = elapsed_ms(started)
         except Exception as exc:
             lat = elapsed_ms(started)
+            metrics.asr_ms = lat
             payload = exception_payload(
                 exc, fallback=f"ASR provider failed with {type(exc).__name__}."
             )
@@ -303,25 +340,19 @@ class SpeechPipeline:
                 **payload,
                 latency_ms=lat,
             )
-            await self.sink.emit(
-                "turn.finished",
-                mode=turn_mode,
-                reason="asr_error",
-                latency_ms=lat,
-            )
+            await self._emit_turn_finished(metrics, turn_mode, reason="asr_error")
             return
 
         if not final_transcript:
-            await self.sink.emit(
-                "turn.finished",
-                mode=turn_mode,
-                reason="empty_transcript",
-                latency_ms=elapsed_ms(started),
+            if metrics.asr_ms is None:
+                metrics.asr_ms = elapsed_ms(started)
+            await self._emit_turn_finished(
+                metrics, turn_mode, reason="empty_transcript"
             )
             return
 
         await self._respond_to_transcript(
-            final_transcript, started, turn_id, turn_state, turn_mode
+            final_transcript, metrics, turn_state, turn_mode
         )
 
     async def handle_continue(self, mode: str = "chat") -> None:
@@ -338,25 +369,22 @@ class SpeechPipeline:
 
         started = time.perf_counter()
         turn_id = self._next_turn_id(turn_state)
+        metrics = _TurnMetrics(started=started, turn_id=turn_id)
         await self.cancel_tts("continue_turn")
         await self.sink.emit(
             "turn.started", mode=turn_mode, source="continue", turn_id=turn_id
         )
         prefix = turn_state.messages[-1]["content"]
-        turn_state.messages.pop()
-        turn_state.messages.append({"role": "assistant", "content": prefix})
 
         try:
             response_text = await self._stream_llm_and_tts(
-                prefix, started, turn_id, turn_state, turn_mode
+                prefix, metrics, turn_state, turn_mode
             )
             turn_state.messages[-1] = {
                 "role": "assistant",
                 "content": response_text.strip(),
             }
-            await self.sink.emit(
-                "turn.finished", mode=turn_mode, latency_ms=elapsed_ms(started)
-            )
+            await self._emit_turn_finished(metrics, turn_mode)
         except Exception as exc:
             lat = elapsed_ms(started)
             payload = exception_payload(
@@ -382,24 +410,21 @@ class SpeechPipeline:
     async def _respond_to_transcript(
         self,
         final_transcript: str,
-        started: float,
-        turn_id: int,
+        metrics: _TurnMetrics,
         turn_state: _TurnState,
         turn_mode: str,
     ) -> None:
         turn_state.messages.append({"role": "user", "content": final_transcript})
         try:
             response_text = await self._stream_llm_and_tts(
-                "", started, turn_id, turn_state, turn_mode
+                "", metrics, turn_state, turn_mode
             )
             turn_state.messages.append(
                 {"role": "assistant", "content": response_text.strip()}
             )
-            await self.sink.emit(
-                "turn.finished", mode=turn_mode, latency_ms=elapsed_ms(started)
-            )
+            await self._emit_turn_finished(metrics, turn_mode)
         except Exception as exc:
-            lat = elapsed_ms(started)
+            lat = elapsed_ms(metrics.started)
             payload = exception_payload(
                 exc, fallback=f"LLM provider failed with {type(exc).__name__}."
             )
@@ -420,20 +445,23 @@ class SpeechPipeline:
     async def _stream_llm_and_tts(
         self,
         response_text: str,
-        started: float,
-        turn_id: int,
+        metrics: _TurnMetrics,
         turn_state: _TurnState,
         turn_mode: str,
     ) -> str:
         first_token_seen = False
         sentence_buffer = ""
+        first_flush_done = False
         async for token in self.providers.llm.stream_response(
             self._llm_messages(turn_state, turn_mode)
         ):
             if not first_token_seen:
                 first_token_seen = True
+                metrics.llm_first_token_ms = elapsed_ms(metrics.started)
                 await self.sink.emit(
-                    "llm.first_token", mode=turn_mode, latency_ms=elapsed_ms(started)
+                    "llm.first_token",
+                    mode=turn_mode,
+                    latency_ms=metrics.llm_first_token_ms,
                 )
             response_text += token
             sentence_buffer += token
@@ -441,31 +469,38 @@ class SpeechPipeline:
                 "llm.token", mode=turn_mode, text=token, accumulated=response_text
             )
 
-            if should_flush_tts(
-                sentence_buffer, self.tts_chunk_chars, self.min_tts_chars
-            ):
+            # The first flush of a turn uses the lower eager threshold
+            # (and flushes on clause boundaries) so the voice starts as
+            # soon as the opening clause is available.
+            eager = not first_flush_done and self.first_chunk_chars > 0
+            limit = (
+                min(self.first_chunk_chars, self.tts_chunk_chars)
+                if eager
+                else self.tts_chunk_chars
+            )
+            if should_flush_tts(sentence_buffer, limit, self.min_tts_chars, eager=eager):
                 await self._start_tts_chunk(
-                    sentence_buffer.strip(), started, turn_id, turn_state, turn_mode
+                    sentence_buffer.strip(), metrics, turn_state, turn_mode
                 )
                 sentence_buffer = ""
+                first_flush_done = True
 
         if sentence_buffer.strip():
             await self._start_tts_chunk(
-                sentence_buffer.strip(), started, turn_id, turn_state, turn_mode
+                sentence_buffer.strip(), metrics, turn_state, turn_mode
             )
         return response_text
 
     async def _start_tts_chunk(
         self,
         text: str,
-        turn_started: float,
-        turn_id: int,
+        metrics: _TurnMetrics,
         turn_state: _TurnState,
         turn_mode: str,
     ) -> None:
         previous = turn_state.tts_tail
         task = asyncio.create_task(
-            self._stream_tts_after(previous, text, turn_started, turn_id, turn_mode)
+            self._stream_tts_after(previous, text, metrics, turn_mode)
         )
         turn_state.tts_tail = task
         turn_state.active_tts_tasks.add(task)
@@ -475,8 +510,7 @@ class SpeechPipeline:
         self,
         previous: asyncio.Task | None,
         text: str,
-        turn_started: float,
-        turn_id: int,
+        metrics: _TurnMetrics,
         turn_mode: str,
     ) -> None:
         if previous is not None:
@@ -486,10 +520,10 @@ class SpeechPipeline:
                 raise
             except Exception as exc:
                 logger.warning("Previous TTS task failed: %s", exc)
-        await self._stream_tts(text, turn_started, turn_id, turn_mode)
+        await self._stream_tts(text, metrics, turn_mode)
 
     async def _stream_tts(
-        self, text: str, turn_started: float, turn_id: int, turn_mode: str
+        self, text: str, metrics: _TurnMetrics, turn_mode: str
     ) -> None:
         first_chunk_seen = False
         chunk_index = 0
@@ -497,7 +531,7 @@ class SpeechPipeline:
 
             async def progress(event_type: str, payload: dict) -> None:
                 await self.sink.emit(
-                    event_type, **payload, latency_ms=elapsed_ms(turn_started)
+                    event_type, **payload, latency_ms=elapsed_ms(metrics.started)
                 )
 
             async for chunk in self.providers.tts.stream_audio_with_progress(
@@ -506,12 +540,15 @@ class SpeechPipeline:
                 chunk_index += 1
                 if not first_chunk_seen:
                     first_chunk_seen = True
+                    first_chunk_ms = elapsed_ms(metrics.started)
+                    if metrics.tts_first_chunk_ms is None:
+                        metrics.tts_first_chunk_ms = first_chunk_ms
                     await self.sink.emit(
                         "tts.first_chunk",
                         mode=turn_mode,
-                        latency_ms=elapsed_ms(turn_started),
+                        latency_ms=first_chunk_ms,
                         text=text,
-                        turn_id=turn_id,
+                        turn_id=metrics.turn_id,
                     )
                 encoded = base64.b64encode(chunk.data).decode("ascii")
                 await self.sink.emit(
@@ -525,16 +562,16 @@ class SpeechPipeline:
                     data=encoded,
                     final=chunk.final,
                     text=text,
-                    turn_id=turn_id,
+                    turn_id=metrics.turn_id,
                     chunk_index=chunk_index,
                     text_chars=len(text),
                     byte_length=len(chunk.data),
-                    latency_ms=elapsed_ms(turn_started),
+                    latency_ms=elapsed_ms(metrics.started),
                 )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            lat = elapsed_ms(turn_started)
+            lat = elapsed_ms(metrics.started)
             payload = exception_payload(
                 exc, fallback=f"TTS provider failed with {type(exc).__name__}."
             )
@@ -552,6 +589,28 @@ class SpeechPipeline:
                 **payload,
                 latency_ms=lat,
             )
+
+    async def _emit_turn_finished(
+        self, metrics: _TurnMetrics, turn_mode: str, **payload: Any
+    ) -> None:
+        """Emit a summary immediately before the corresponding finish event."""
+
+        total_ms = elapsed_ms(metrics.started)
+        await self.sink.emit(
+            "turn.metrics",
+            mode=turn_mode,
+            turn_id=metrics.turn_id,
+            asr_ms=metrics.asr_ms,
+            llm_first_token_ms=metrics.llm_first_token_ms,
+            tts_first_chunk_ms=metrics.tts_first_chunk_ms,
+            total_ms=total_ms,
+        )
+        await self.sink.emit(
+            "turn.finished",
+            mode=turn_mode,
+            latency_ms=total_ms,
+            **payload,
+        )
 
     def _llm_messages(
         self, turn_state: _TurnState, turn_mode: str
@@ -609,7 +668,17 @@ def exception_payload(exc: Exception, *, fallback: str) -> dict[str, str]:
     }
 
 
-def should_flush_tts(text: str, limit: int, minimum: int = 0) -> bool:
+def should_flush_tts(
+    text: str, limit: int, minimum: int = 0, *, eager: bool = False
+) -> bool:
+    """Decide whether the buffered LLM text should be handed to TTS.
+
+    Flushes when the buffer reaches *limit* characters or ends on
+    sentence punctuation (subject to the *minimum* lower bound). With
+    ``eager=True`` -- used for the first chunk of a turn -- a comma
+    also counts as a flush boundary so synthesis can start on the
+    opening clause.
+    """
     stripped = text.strip()
     if not stripped:
         return False
@@ -617,4 +686,6 @@ def should_flush_tts(text: str, limit: int, minimum: int = 0) -> bool:
         return True
     if len(stripped) < minimum:
         return False
+    if eager and stripped.endswith(","):
+        return True
     return stripped.endswith((".", "!", "?", ";", ":"))

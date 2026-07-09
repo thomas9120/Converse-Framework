@@ -557,7 +557,8 @@ def test_llamacpp_sampler_provider_is_callable_driven():
 
     provider.set_sampler_provider(sampler)
     assert provider._sampler_provider is sampler
-    assert provider._build_sampler() == {"temperature": 0.42}
+    # Overrides are merged over the constructor defaults.
+    assert provider._build_sampler() == {"temperature": 0.42, "max_tokens": 256}
     assert captured == {"called": True}
 
 
@@ -566,7 +567,7 @@ def test_llamacpp_sampler_provider_can_be_cleared():
         LlamaCppProvider, build_provider("llm", "llamacpp", {"temperature": 0.7})
     )
     provider.set_sampler_provider(lambda: {"temperature": 0.1})
-    assert provider._build_sampler() == {"temperature": 0.1}
+    assert provider._build_sampler() == {"temperature": 0.1, "max_tokens": 256}
     provider.set_sampler_provider(None)
     # Falls back to constructor defaults.
     assert provider._build_sampler() == {"temperature": 0.7, "max_tokens": 256}

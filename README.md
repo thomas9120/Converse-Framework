@@ -1,5 +1,7 @@
 # Converse Framework
 
+[![Tests](https://github.com/thomas9120/Converse-Framework/actions/workflows/tests.yml/badge.svg)](https://github.com/thomas9120/Converse-Framework/actions/workflows/tests.yml)
+
 Provider-agnostic speech stack for speech-to-speech applications.
 
 ## Table of Contents
@@ -9,6 +11,7 @@ Provider-agnostic speech stack for speech-to-speech applications.
   - [Python version compatibility](#python-version-compatibility)
 - [Quick Start](#quick-start)
   - [Provider status semantics](#provider-status-semantics)
+- [Turn Latency and Metrics](#turn-latency-and-metrics)
 - [Recipes](#recipes)
   - [Minimal mock text pipeline](#minimal-mock-text-pipeline)
   - [Audio frame to utterance collector to pipeline](#audio-frame-to-utterance-collector-to-pipeline)
@@ -18,6 +21,7 @@ Provider-agnostic speech stack for speech-to-speech applications.
   - [Browser microphone capture](#browser-microphone-capture-js-reference-client)
   - [Mobile browser microphone testing](#mobile-browser-microphone-testing)
   - [Wrap an external CLI as a provider](#wrap-an-external-cli-as-a-provider)
+  - [OpenAI-compatible endpoints (LLM, ASR, TTS)](#openai-compatible-endpoints-llm-asr-tts)
   - [Pocket TTS voice listing and configuration](#pocket-tts-voice-listing-and-configuration)
   - [CUDA DLL helper](#cuda-dll-helper-windows)
 - [Runtime Provider Updates](#runtime-provider-updates)
@@ -49,6 +53,7 @@ pip install converse-framework[faster-whisper]  # faster-whisper ASR
 pip install converse-framework[whisper-cpp]     # whisper.cpp HTTP ASR
 pip install converse-framework[audio-cpp]       # audio.cpp HTTP ASR + TTS
 pip install converse-framework[llamacpp]        # llama.cpp HTTP LLM
+pip install converse-framework[openai-compat]   # OpenAI-compatible LLM + ASR + TTS (Ollama, Groq, Kokoro-FastAPI, ...)
 pip install converse-framework[kokoro]          # Kokoro ONNX TTS
 pip install converse-framework[pocket-tts]      # Pocket TTS
 pip install converse-framework[all]             # everything
@@ -100,6 +105,7 @@ own constraints (the table below mirrors the markers in
 | `silero` | 3.11+ | `silero-vad` + `onnxruntime`. No known upper bound. |
 | `faster-whisper` | 3.11+ | The `nvidia-cublas-cu12` wheel pins Windows. |
 | `llamacpp` | 3.11+ | `httpx` itself supports 3.9+, so 3.11+ is the only constraint. |
+| `openai-compat` | 3.11+ | Only needs `httpx`. Talks to any OpenAI-compatible server. |
 | `whisper-cpp` | 3.11+ | Only needs `httpx`, which supports 3.9+. |
 | `audio-cpp` | 3.11+ | Only needs `httpx`. Talks to a user-managed `audiocpp_server`. |
 | `kokoro` | 3.11 to <3.14 | `kokoro-onnx` 0.5.0 requires Python <3.14. The wheel build fails fast on 3.14+. |
@@ -162,6 +168,43 @@ The ``status_level`` field distinguishes ``"ready"``, ``"configured"``,
 ``"loading"``, ``"error"``, and ``"unavailable"``. The old
 ``check_status()`` is kept for backward compatibility and behaves
 the same as ``probe_status()`` for providers that implement it.
+
+## Turn Latency and Metrics
+
+`PipelineConfig.first_chunk_chars` controls the eager first TTS flush. It
+defaults to `40`, so the first audio can start at the first comma or short
+opening clause; later chunks return to the normal `tts_chunk_chars` threshold.
+Set it to `0` to restore the previous single-threshold behavior:
+
+```python
+config = PipelineConfig(
+    first_chunk_chars=40,
+    tts_chunk_chars=120,
+)
+pipeline = SpeechPipeline(providers=bundle, sink=sink, config=config)
+```
+
+Every turn emits a `turn.metrics` event immediately before `turn.finished`:
+
+```json
+{
+  "type": "turn.metrics",
+  "payload": {
+    "mode": "chat",
+    "turn_id": 12,
+    "asr_ms": 184,
+    "llm_first_token_ms": 327,
+    "tts_first_chunk_ms": 511,
+    "total_ms": 842
+  }
+}
+```
+
+The stage fields are turn-relative latency checkpoints. A field is `null` when
+that stage was not reached, such as ASR during a text turn or TTS when no first
+audio chunk was produced before the logical turn completed. This summary avoids
+reconstructing latency from the individual `asr.final`, `llm.first_token`, and
+`tts.first_chunk` events.
 
 ## Recipes
 
@@ -468,11 +511,35 @@ configurable interval:
     sampleRate: 16000,
     channels: 1,
     frameMs: 30,
+    frameFormat: "binary-v1", // optional; JSON/base64 remains the default
     onLevel: (db) => console.log("mic level", db.toFixed(1)),
   });
   mic.start(); // begins capture after user gesture
 </script>
 ```
+
+Binary microphone packets use a versioned format while control messages and
+outgoing framework events remain JSON. Existing clients need no changes because
+the sender defaults to the original JSON/base64 `audio.frame` envelope.
+
+The binary v1 packet is a 16-byte network-order header, followed by the UTF-8
+mode and raw PCM s16le bytes:
+
+| Bytes | Field |
+| --- | --- |
+| 0–1 | ASCII magic `CF` |
+| 2 | Version (`1`) |
+| 3 | Message kind (`1` for microphone audio) |
+| 4–7 | Unsigned 32-bit frame sequence |
+| 8–11 | Unsigned 32-bit sample rate |
+| 12 | Channel count |
+| 13–14 | Unsigned 16-bit frame duration in milliseconds |
+| 15 | UTF-8 mode byte length |
+| 16… | Mode bytes, then PCM s16le frame bytes |
+
+A zero-length mode uses `WebSocketSessionConfig.default_mode`. The server
+validates the version, packet kind, audio shape, UTF-8 mode, and exact PCM byte
+count before the frame reaches the utterance collector.
 
 A composed client at `converse_framework/js/browser-voice-client.js`
 combines `MicFrameSender`, `TtsAudioPlayer`, and an optional
@@ -608,6 +675,70 @@ binary of choice, and register it with `register_provider("asr",
 "my-name", "my.module:MySubprocessProvider")`. The example also
 ships a fake-echo script (`--use-fake-echo`) that lets the driver
 run end-to-end in CI without installing any real ASR.
+
+#### OpenAI-compatible endpoints (LLM, ASR, TTS)
+
+The `openai-compatible` provider name (requires the `openai-compat`
+extra) is registered for all three inference kinds and talks to any
+server that implements the matching OpenAI endpoint:
+
+| Kind | Endpoint | Works with |
+|---|---|---|
+| `llm` | `/v1/chat/completions` | Ollama, LM Studio, vLLM, llama.cpp, Groq, OpenRouter, Together, OpenAI |
+| `asr` | `/v1/audio/transcriptions` | OpenAI Whisper, Groq hosted Whisper, `speaches` / faster-whisper-server |
+| `tts` | `/v1/audio/speech` | OpenAI TTS, Kokoro-FastAPI, openedai-speech |
+
+```python
+from converse_framework import build_provider_bundle
+
+bundle = build_provider_bundle(
+    {
+        "vad": {"provider": "mock"},
+        "asr": {
+            "provider": "openai-compatible",
+            "base_url": "https://api.groq.com/openai",
+            "model": "whisper-large-v3",
+            "api_key": "gsk_...",
+        },
+        "llm": {
+            "provider": "openai-compatible",
+            "base_url": "http://localhost:11434",  # e.g. Ollama; no /v1 suffix
+            "model": "llama3.2",                   # "auto" = first listed model
+        },
+        "tts": {
+            "provider": "openai-compatible",
+            "base_url": "http://localhost:8880",   # e.g. Kokoro-FastAPI
+            "model": "kokoro",
+            "voice": "af_heart",
+        },
+    }
+)
+```
+
+All three accept `base_url` (must not include the `/v1` path segment
+-- the providers append the versioned paths themselves), an optional
+`api_key` sent as an `Authorization: Bearer` header, and `timeout_s`.
+The servers are managed externally; the framework never starts them.
+
+Kind-specific notes:
+
+* **LLM** -- `model` defaults to `"auto"`, which resolves to the first
+  entry reported by `/v1/models`; hosted services list many models, so
+  set it explicitly for anything other than a single-model local
+  server. Shares its implementation with the `llamacpp` provider
+  (which also accepts `api_key`, matching llama.cpp's `--api-key`
+  option); the difference is that `llamacpp` probes the llama.cpp-native
+  `/health` endpoint first, while `openai-compatible` checks
+  `/v1/models` directly.
+* **ASR** -- uploads the utterance as a multipart WAV, so it works with
+  remote/hosted servers (unlike the `audio-cpp` ASR provider, which
+  passes a server-local file path). Optional `language` and
+  `temperature` are forwarded as form fields.
+* **TTS** -- requests `response_format: "wav"` and yields the decoded
+  PCM as a single final chunk, so the server must support WAV output
+  (OpenAI, Kokoro-FastAPI, and openedai-speech all do). `voice` is
+  required by OpenAI; some local servers have a default. Optional
+  `speed` is forwarded.
 
 #### Pocket TTS voice listing and configuration
 
@@ -818,13 +949,15 @@ if "vad" in updated:
 The framework provides a reusable :class:`WebSocketSession` that
 handles the common message-dispatch loop for browser-based voice apps.
 It owns the transport, sink, provider bundle, pipeline, collector, and
-frame stats, and routes seven built-in message types without requiring
-the application to copy the recipe state machine.
+frame stats, and routes seven JSON control/message types plus versioned binary
+microphone packets without requiring the application to copy the recipe state
+machine.
 
 Built-in message types:
 
-* ``audio.frame`` — validated PCM frame forwarded to the utterance
-  collector.
+* Binary v1 packet — raw PCM s16le microphone frame forwarded directly to the
+  utterance collector.
+* ``audio.frame`` — legacy JSON/base64 microphone frame; still fully supported.
 * ``text.turn`` — text conversation turn.
 * ``conversation.clear`` — clears per-mode conversation history.
 * ``tts.cancel`` — cancels in-flight TTS synthesis.
@@ -853,25 +986,49 @@ for apps that do not use it.
 Usage sketch:
 
 ```python
+import json
+
 from converse_framework.session import (
     WebSocketSession,
     WebSocketSessionConfig,
     WebSocketSessionHooks,
 )
 
+async def on_settings_update(session, payload):
+    print("settings updated", payload)
+
+
+async def on_event(session, event):
+    print("event", event.type)
+
+
 hooks = WebSocketSessionHooks(
-    on_settings_update=lambda cfg: print("settings updated", cfg),
-    on_event=lambda ev: print("event", ev.type),
+    on_settings_update=on_settings_update,
+    on_event=on_event,
 )
 session = WebSocketSession(
     transport=your_transport,
     config=WebSocketSessionConfig(
-        provider_config={"vad": {"provider": "mock"}, ...},
+        provider_config={
+            "vad": {"provider": "mock"},
+            "asr": {"provider": "mock"},
+            "llm": {"provider": "mock"},
+            "tts": {"provider": "mock"},
+        },
     ),
     hooks=hooks,
 )
 
-async for message in your_websocket:
+while True:
+    packet = await websocket.receive()
+    if packet.get("type") == "websocket.disconnect":
+        break
+    if packet.get("bytes") is not None:
+        message = packet["bytes"]
+    elif packet.get("text") is not None:
+        message = json.loads(packet["text"])
+    else:
+        continue
     await session.handle_message(message)
 ```
 
@@ -932,11 +1089,13 @@ The framework owns the **provider-agnostic speech stack**:
   `browser-voice-client.js`, `tts-audio-player.js`).
 * CUDA DLL discovery helper (`cuda_utils`).
 
-As of v0.2 the framework also provides safe provider-swap mechanics
+As of v0.3 the framework also provides safe provider-swap mechanics
 (``ProviderBundle.replace()``, ``pipeline.update_providers()``,
 ``collector.update_vad_provider()``), first-class provider
 configuration (``configure()``, ``list_voices()``), and lifecycle
-events (``provider.loading``, ``provider.loaded``, ``provider.error``).
+events (``provider.loading``, ``provider.loaded``, ``provider.error``),
+OpenAI-compatible inference providers, eager first-chunk TTS, per-turn latency
+metrics, and opt-in binary microphone frames.
 
 The framework does **not** own the application. The following stay in
 the consumer app (e.g. the reference harness):
@@ -960,13 +1119,12 @@ purpose.
 
 ## Status
 
-The package is in v0.1 pre-release. The test matrix below is the
-current contract:
+The current package metadata is v0.3.0. The automated test surfaces are:
 
 | Surface | Tests |
 |---|---:|
-| `converse_framework` (base) | 126 |
-| Reference harness (`Reference-Repository-Conversational-AI-Harness`) | 91 passed, 1 skipped |
+| Python 3.11 / 3.12 / 3.13 | 312 pytest tests |
+| Browser JavaScript helpers | 61 assertions |
 
 Run them locally:
 
@@ -974,6 +1132,7 @@ Run them locally:
 # Framework (run from the package root)
 python -m pytest
 
-# Harness (run from inside the harness directory)
-python -m pytest
+# Browser helpers
+node tests/js/test_helpers.mjs
+node tests/js/test_speaker_echo_guard.mjs
 ```

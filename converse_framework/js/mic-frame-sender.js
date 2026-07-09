@@ -4,7 +4,7 @@
  *
  * Captures microphone input via the Web Audio API, downsamples to the
  * target sample rate, slices into fixed-size PCM s16le frames, and
- * sends them as base64-encoded payloads over a WebSocket.
+ * sends them as JSON/base64 or opt-in binary packets over a WebSocket.
  *
  * ```html
  * <script src="mic-frame-sender.js"></script>
@@ -37,6 +37,11 @@
 	// -----------------------------------------------------------------------
 
 	const ENCODING = "pcm_s16le";
+	const BINARY_AUDIO_MAGIC_0 = 0x43; // C
+	const BINARY_AUDIO_MAGIC_1 = 0x46; // F
+	const BINARY_AUDIO_VERSION = 1;
+	const BINARY_AUDIO_KIND_MIC = 1;
+	const BINARY_AUDIO_HEADER_SIZE = 16;
 
 	// -----------------------------------------------------------------------
 	// Utilities
@@ -95,6 +100,59 @@
 	}
 
 	/**
+	 * Encode one raw PCM frame using the converse_framework binary audio v1
+	 * packet format. Header integers use network byte order; PCM remains s16le.
+	 */
+	function encodeBinaryAudioFrameV1(pcmBuf, metadata) {
+		if (!(pcmBuf instanceof ArrayBuffer) || pcmBuf.byteLength === 0) {
+			throw new Error("binary audio PCM must be a non-empty ArrayBuffer");
+		}
+		metadata = metadata || {};
+		const sequence = Number(metadata.sequence);
+		const sampleRate = Number(metadata.sample_rate);
+		const channels = Number(metadata.channels);
+		const frameMs = Number(metadata.frame_ms);
+		if (!Number.isInteger(sequence) || sequence < 0 || sequence > 0xffffffff) {
+			throw new Error("binary audio sequence must be a uint32");
+		}
+		if (!Number.isInteger(sampleRate) || sampleRate <= 0 || sampleRate > 0xffffffff) {
+			throw new Error("binary audio sample_rate must be a uint32");
+		}
+		if (!Number.isInteger(channels) || channels <= 0 || channels > 0xff) {
+			throw new Error("binary audio channels must be a uint8");
+		}
+		if (!Number.isInteger(frameMs) || frameMs <= 0 || frameMs > 0xffff) {
+			throw new Error("binary audio frame_ms must be a uint16");
+		}
+
+		const modeBytes = new TextEncoder().encode(String(metadata.mode || ""));
+		if (modeBytes.byteLength > 0xff) {
+			throw new Error("binary audio mode must be at most 255 UTF-8 bytes");
+		}
+
+		const packet = new ArrayBuffer(
+			BINARY_AUDIO_HEADER_SIZE + modeBytes.byteLength + pcmBuf.byteLength,
+		);
+		const view = new DataView(packet);
+		view.setUint8(0, BINARY_AUDIO_MAGIC_0);
+		view.setUint8(1, BINARY_AUDIO_MAGIC_1);
+		view.setUint8(2, BINARY_AUDIO_VERSION);
+		view.setUint8(3, BINARY_AUDIO_KIND_MIC);
+		view.setUint32(4, sequence, false);
+		view.setUint32(8, sampleRate, false);
+		view.setUint8(12, channels);
+		view.setUint16(13, frameMs, false);
+		view.setUint8(15, modeBytes.byteLength);
+		const bytes = new Uint8Array(packet);
+		bytes.set(modeBytes, BINARY_AUDIO_HEADER_SIZE);
+		bytes.set(
+			new Uint8Array(pcmBuf),
+			BINARY_AUDIO_HEADER_SIZE + modeBytes.byteLength,
+		);
+		return packet;
+	}
+
+	/**
 	 * Number of samples for N ms at a given sample rate.
 	 */
 	function msToSamples(ms, rate) {
@@ -140,6 +198,7 @@
 	 * @param {number}  [options.frameMs=30]       - frame duration in ms.
 	 * @param {string}  [options.mode="chat"]      - conversation mode tag.
 	 * @param {string}  [options.messageType="audio.frame"] - WebSocket message type.
+	 * @param {string}  [options.frameFormat="json"] - "json" or opt-in "binary-v1".
 	 * @param {function(number):void} [options.onLevel] - level callback (0-1).
 	 * @param {function(Error):void}  [options.onError]  - error callback.
 	 * @param {AudioContext} [options.audioContext]  - shared AudioContext (created if omitted).
@@ -153,6 +212,10 @@
 		this._frameMs = options.frameMs || 30;
 		this._mode = options.mode || "chat";
 		this._messageType = options.messageType || "audio.frame";
+		this._frameFormat = options.frameFormat || "json";
+		if (this._frameFormat !== "json" && this._frameFormat !== "binary-v1") {
+			throw new Error('frameFormat must be "json" or "binary-v1"');
+		}
 		this._onLevel = options.onLevel || null;
 		this._onError = options.onError || null;
 		this._audioContext = options.audioContext || null;
@@ -355,12 +418,12 @@
 			}
 
 			const pcmBuf = float32ToPcmS16le(frame);
-			const base64 = arrayBufferToBase64(pcmBuf);
-
+			const jsonData =
+				this._frameFormat === "json" ? arrayBufferToBase64(pcmBuf) : null;
 			const payload = {
 				type: this._messageType,
 				payload: {
-					data: base64,
+					data: jsonData,
 					encoding: ENCODING,
 					sample_rate: this._targetRate,
 					channels: this._channels,
@@ -376,7 +439,11 @@
 			}
 
 			if (this._ws && this._ws.readyState === WebSocket.OPEN) {
-				this._ws.send(JSON.stringify(payload));
+				if (this._frameFormat === "binary-v1") {
+					this._ws.send(encodeBinaryAudioFrameV1(pcmBuf, payload.payload));
+				} else {
+					this._ws.send(JSON.stringify(payload));
+				}
 			}
 		},
 
@@ -439,6 +506,7 @@
 	MicFrameSender.downsampleFloat32 = downsampleFloat32;
 	MicFrameSender.float32ToPcmS16le = float32ToPcmS16le;
 	MicFrameSender.arrayBufferToBase64 = arrayBufferToBase64;
+	MicFrameSender.encodeBinaryAudioFrameV1 = encodeBinaryAudioFrameV1;
 	MicFrameSender.msToSamples = msToSamples;
 
 	return MicFrameSender;
