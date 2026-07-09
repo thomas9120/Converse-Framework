@@ -44,7 +44,9 @@ Ranked by impact-per-effort. Mark items off as they land.
   - Needs a "have I flushed yet this turn" flag in `_stream_llm_and_tts`.
   - Payoff: voice starts noticeably sooner; steady-state audio unchanged.
 
-- [ ] **4. `turn.metrics` summary event**
+- [x] **4. `turn.metrics` summary event**
+  (done: per-turn ASR, first-token, first-TTS-chunk, and total latency summary
+  emitted immediately before `turn.finished`, tests in `tests/test_pipeline.py`)
   - Individual events already carry `latency_ms`, but reconstructing a turn
     timeline from the event stream is painful.
   - Emit one event alongside `turn.finished` with `asr_ms`,

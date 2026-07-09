@@ -229,7 +229,64 @@ def test_text_turn_with_mock_providers_emits_core_events():
     assert "llm.token" in events
     assert "tts.first_chunk" in events
     assert "tts.audio" in events
+    assert "turn.metrics" in events
     assert "turn.finished" in events
+
+
+def test_turn_metrics_summarize_event_latencies_before_turn_finished():
+    async def run_turn():
+        queue = asyncio.Queue()
+        pipeline = SpeechPipeline(
+            mock_bundle(),
+            QueueEventSink(queue),
+            PipelineConfig(tts_chunk_chars=60),
+        )
+
+        await pipeline.handle_text_turn("hello framework")
+        await asyncio.sleep(0.05)
+        return drain(queue)
+
+    events = asyncio.run(run_turn())
+    metrics_index = next(
+        index for index, event in enumerate(events) if event["type"] == "turn.metrics"
+    )
+    metrics = events[metrics_index]["payload"]
+    finished = events[metrics_index + 1]
+
+    final_asr = next(
+        event
+        for event in events
+        if event["type"] == "asr.transcript" and event["payload"]["final"]
+    )
+    first_llm = next(event for event in events if event["type"] == "llm.first_token")
+    first_tts = next(event for event in events if event["type"] == "tts.first_chunk")
+
+    assert finished["type"] == "turn.finished"
+    assert metrics["turn_id"] == 1
+    assert metrics["asr_ms"] == final_asr["payload"]["latency_ms"]
+    assert metrics["llm_first_token_ms"] == first_llm["payload"]["latency_ms"]
+    assert metrics["tts_first_chunk_ms"] == first_tts["payload"]["latency_ms"]
+    assert metrics["total_ms"] == finished["payload"]["latency_ms"]
+
+
+def test_empty_turn_metrics_use_none_for_unreached_stages():
+    async def run_turn():
+        queue = asyncio.Queue()
+        pipeline = SpeechPipeline(mock_bundle(), QueueEventSink(queue))
+
+        await pipeline.handle_text_turn("   ")
+        return drain(queue)
+
+    events = asyncio.run(run_turn())
+    metrics = next(event for event in events if event["type"] == "turn.metrics")
+    finished_index = events.index(metrics) + 1
+
+    assert metrics["payload"]["asr_ms"] is not None
+    assert metrics["payload"]["llm_first_token_ms"] is None
+    assert metrics["payload"]["tts_first_chunk_ms"] is None
+    assert metrics["payload"]["total_ms"] >= metrics["payload"]["asr_ms"]
+    assert events[finished_index]["type"] == "turn.finished"
+    assert events[finished_index]["payload"]["reason"] == "empty_transcript"
 
 
 def test_text_turn_marks_vad_events_text_only():
