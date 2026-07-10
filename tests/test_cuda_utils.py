@@ -163,12 +163,13 @@ class TestAddNvidiaDllDirectories:
         monkeypatch.setattr(
             os, "add_dll_directory", lambda path: object(), raising=False
         )
-        monkeypatch.setenv("PATH", "C:\\existing")
+        # No drive letter: ":" is the PATH separator on POSIX CI runners.
+        monkeypatch.setenv("PATH", "existing-entry")
 
         cuda_utils.add_nvidia_dll_directories()
 
         entries = os.environ["PATH"].split(os.pathsep)
-        assert entries[-1] == "C:\\existing"
+        assert entries[-1] == "existing-entry"
         prepended = entries[:-1]
         assert len(prepended) == 3
         assert all("nvidia" in entry for entry in prepended)
@@ -183,7 +184,7 @@ class TestAddNvidiaDllDirectories:
         monkeypatch.setattr(
             os, "add_dll_directory", lambda path: object(), raising=False
         )
-        monkeypatch.setenv("PATH", "C:\\existing")
+        monkeypatch.setenv("PATH", "existing-entry")
 
         cuda_utils.add_nvidia_dll_directories()
         first = os.environ["PATH"]
@@ -201,11 +202,11 @@ class TestAddNvidiaDllDirectories:
             raise OSError("nope")
 
         monkeypatch.setattr(os, "add_dll_directory", failing_add, raising=False)
-        monkeypatch.setenv("PATH", "C:\\existing")
+        monkeypatch.setenv("PATH", "existing-entry")
 
         cuda_utils.add_nvidia_dll_directories()
 
-        assert os.environ["PATH"] != "C:\\existing"
+        assert os.environ["PATH"] != "existing-entry"
         assert "nvidia" in os.environ["PATH"]
 
 
