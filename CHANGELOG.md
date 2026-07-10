@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- **`TtsAudioPlayer.cancel()` / `clear()` (barge-in support)** — the player
+  now tracks its live `AudioBufferSourceNode`s and exposes `cancel()` to
+  stop scheduled playback immediately and reset the schedule clock
+  (`clear()` is an alias). The player also silences itself on
+  `tts.cancelled` events, and `close()` now stops scheduled audio instead
+  of letting it play out.
+- **`TtsAudioPlayer.remainingMs()`** — reports how many milliseconds of
+  scheduled audio are still to play, based on the AudioContext clock.
+- **Fixed `BrowserVoiceClient.close()` TypeError** — it called
+  `this._player.clear()`, which did not exist; any app closing the
+  composed client crashed. It now calls `close()` (and `clear()` exists
+  too).
+- **`SpeakerEchoGuard` resumes on playback drain, not event arrival** —
+  `tts.audio` events arrive as fast as synthesis streams, so playback
+  could outlive the final event by seconds and the mic unsuppressed while
+  the speaker was still talking. The guard now accepts a
+  `player` option / `attachPlayer()` (anything with `remainingMs()`) or a
+  `remainingMs` callback and starts its tail delay only once scheduled
+  playback has drained, re-arming if more audio gets scheduled meanwhile.
+  `BrowserVoiceClient` wires its player into the guard automatically.
+- **`add_nvidia_dll_directories()` also prepends to `PATH`** —
+  `os.add_dll_directory()` is invisible to native libraries (CTranslate2 /
+  faster-whisper) that resolve CUDA DLLs with a plain `LoadLibrary` at
+  inference time, which made every transcription fail with
+  `Library cublas64_12.dll is not found` on Windows even after discovery
+  ran. Discovered DLL dirs are now prepended to `os.environ["PATH"]` as
+  well (idempotent, case-insensitive dedupe).
 - **OpenAI-compatible providers (LLM, ASR, TTS)** — new
   `openai-compatible` provider name (extra: `openai-compat`) registered
   for all three inference kinds. LLM covers any

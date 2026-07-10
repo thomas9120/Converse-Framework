@@ -24,7 +24,9 @@
  *   const ws = new WebSocket("ws://localhost:8000/ws");
  *   const player = new TtsAudioPlayer({ webSocket: ws });
  *   const mic = new MicFrameSender({ webSocket: ws });
- *   const guard = new SpeakerEchoGuard();
+ *   // Pass the player so the guard resumes when *playback* drains, not
+ *   // when the last event arrives (playback can outlive it by seconds).
+ *   const guard = new SpeakerEchoGuard({ player });
  *   guard.attachMicSender(mic);
  *
  *   // Forward events to both player and guard
@@ -66,9 +68,17 @@
 	 * Create an echo suppression guard.
 	 *
 	 * @param {Object} [options]
-	 * @param {number}  [options.tailDelayMs=350]  - Delay (ms) after last audio
-	 *     before resuming mic frame sending.
+	 * @param {number}  [options.tailDelayMs=350]  - Delay (ms) after playback
+	 *     drains before resuming mic frame sending.
 	 * @param {string}  [options.mode="drop"]      - ``"drop"`` or ``"pause"``.
+	 * @param {Object}  [options.player]  - Optional ``TtsAudioPlayer`` (or any
+	 *     object with a ``remainingMs()`` method). When set, the guard resumes
+	 *     ``tailDelayMs`` after the player's *scheduled playback* drains rather
+	 *     than after the last ``tts.audio`` event — events arrive as fast as
+	 *     synthesis streams, so playback can outlive the final event by seconds.
+	 * @param {function():number} [options.remainingMs]  - Alternative to
+	 *     ``options.player``: callback returning milliseconds of audio still
+	 *     scheduled to play.
 	 * @param {function(string):void} [options.onStateChange]  - Called with
 	 *     ``"idling"``, ``"suppressed"``, or ``"tail"``.
 	 * @param {Object} [options.clock]  - Optional clock for testing
@@ -79,6 +89,8 @@
 		this._tailDelayMs = options.tailDelayMs || 350;
 		this._mode = options.mode === "pause" ? "pause" : "drop";
 		this._onStateChange = options.onStateChange || null;
+		this._player = options.player || null;
+		this._remainingMsCallback = options.remainingMs || null;
 
 		// Clock abstraction for testability
 		this._clock = options.clock || {
@@ -211,6 +223,18 @@
 		},
 
 		/**
+		 * Wire this guard to a ``TtsAudioPlayer`` so resume timing is based
+		 * on the player's scheduled-playback drain (``remainingMs()``)
+		 * instead of event arrival.
+		 *
+		 * @param {Object} player  A ``TtsAudioPlayer`` instance (or any object
+		 *     with a ``remainingMs()`` method).
+		 */
+		attachPlayer: function (player) {
+			this._player = player;
+		},
+
+		/**
 		 * Release all timers and reset state.
 		 */
 		release: function () {
@@ -254,15 +278,49 @@
 				this._clock.clearTimeout(this._fallbackTimer);
 			}
 
-			// Schedule resume after tail delay
-			this._tailTimer = this._clock.setTimeout(() => {
-				this._resume();
-			}, this._tailDelayMs);
+			// Schedule resume once scheduled playback has drained, plus the
+			// tail delay. Without a player/callback the drain is 0 and this
+			// degrades to the plain tail-delay behaviour.
+			this._armTailTimer();
 
-			// Fallback: force resume even if a final marker was missed
+			// Fallback: force resume even if a final marker was missed or the
+			// drain estimate never reaches zero. Budgeted from the playback
+			// known to be scheduled right now so long replies are not cut off.
 			this._fallbackTimer = this._clock.setTimeout(() => {
 				this._resume();
-			}, FALLBACK_TIMEOUT_MS);
+			}, this._remainingPlaybackMs() + FALLBACK_TIMEOUT_MS);
+		},
+
+		_armTailTimer: function () {
+			var remaining = this._remainingPlaybackMs();
+			this._tailTimer = this._clock.setTimeout(() => {
+				this._tailTimer = null;
+				// Re-check: more audio may have been scheduled while waiting
+				// (the drain estimate grows as chunks keep streaming in).
+				if (this._remainingPlaybackMs() > 0) {
+					this._armTailTimer();
+					return;
+				}
+				this._resume();
+			}, remaining + this._tailDelayMs);
+		},
+
+		_remainingPlaybackMs: function () {
+			var value = 0;
+			try {
+				if (typeof this._remainingMsCallback === "function") {
+					value = this._remainingMsCallback();
+				} else if (
+					this._player &&
+					typeof this._player.remainingMs === "function"
+				) {
+					value = this._player.remainingMs();
+				}
+			} catch (e) {
+				// A broken drain estimate must never wedge the mic.
+				value = 0;
+			}
+			return typeof value === "number" && value > 0 ? value : 0;
 		},
 
 		_resume: function () {

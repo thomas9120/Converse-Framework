@@ -153,6 +153,62 @@ class TestAddNvidiaDllDirectories:
         handles = cuda_utils.add_nvidia_dll_directories()
         assert handles == []
 
+    def test_prepends_discovered_dirs_to_path(
+        self, monkeypatch: pytest.MonkeyPatch, fake_nvidia_tree: Path
+    ):
+        """CTranslate2 resolves CUDA DLLs with a plain ``LoadLibrary`` that
+        only searches PATH, so discovery must also extend PATH."""
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(cuda_utils, "_get_search_roots", lambda: [fake_nvidia_tree])
+        monkeypatch.setattr(
+            os, "add_dll_directory", lambda path: object(), raising=False
+        )
+        # No drive letter: ":" is the PATH separator on POSIX CI runners.
+        monkeypatch.setenv("PATH", "existing-entry")
+
+        cuda_utils.add_nvidia_dll_directories()
+
+        entries = os.environ["PATH"].split(os.pathsep)
+        assert entries[-1] == "existing-entry"
+        prepended = entries[:-1]
+        assert len(prepended) == 3
+        assert all("nvidia" in entry for entry in prepended)
+        # Discovered dirs come before pre-existing entries.
+        assert str(fake_nvidia_tree / "nvidia" / "cublas" / "bin") in prepended
+
+    def test_path_prepend_is_idempotent(
+        self, monkeypatch: pytest.MonkeyPatch, fake_nvidia_tree: Path
+    ):
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(cuda_utils, "_get_search_roots", lambda: [fake_nvidia_tree])
+        monkeypatch.setattr(
+            os, "add_dll_directory", lambda path: object(), raising=False
+        )
+        monkeypatch.setenv("PATH", "existing-entry")
+
+        cuda_utils.add_nvidia_dll_directories()
+        first = os.environ["PATH"]
+        cuda_utils.add_nvidia_dll_directories()
+
+        assert os.environ["PATH"] == first
+
+    def test_path_prepend_happens_even_if_add_dll_directory_fails(
+        self, monkeypatch: pytest.MonkeyPatch, fake_nvidia_tree: Path
+    ):
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setattr(cuda_utils, "_get_search_roots", lambda: [fake_nvidia_tree])
+
+        def failing_add(path: str) -> object:
+            raise OSError("nope")
+
+        monkeypatch.setattr(os, "add_dll_directory", failing_add, raising=False)
+        monkeypatch.setenv("PATH", "existing-entry")
+
+        cuda_utils.add_nvidia_dll_directories()
+
+        assert os.environ["PATH"] != "existing-entry"
+        assert "nvidia" in os.environ["PATH"]
+
 
 # ---------------------------------------------------------------------------
 # Tests: format_nvidia_dll_diagnostic

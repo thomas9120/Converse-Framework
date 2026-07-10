@@ -224,6 +224,107 @@ function assert(condition, label) {
 }
 
 // ---------------------------------------------------------------------------
+// Test: resume waits for scheduled playback drain (remainingMs callback)
+// ---------------------------------------------------------------------------
+
+{
+	const clock = createMockClock();
+	let remaining = 1000; // 1s of audio still scheduled on the AudioContext
+	const guard = new SpeakerEchoGuard({
+		tailDelayMs: 200,
+		clock,
+		remainingMs: () => remaining,
+	});
+
+	guard.onTtsEvent({ type: "tts.first_chunk" });
+	guard.onTtsEvent({ type: "tts.audio", payload: { final: true } });
+
+	// Regression (feedback #4): with only the tail delay, the guard would
+	// resume at 200ms while the speaker still has 1s of audio to play.
+	clock.advance(300);
+	assert(
+		guard.isSuppressed() === true,
+		"still suppressed while playback drains (past plain tail delay)",
+	);
+
+	// Playback drains; timer fires at remaining + tail = 1200ms.
+	remaining = 0;
+	clock.advance(900); // total 1200
+	assert(guard.isSuppressed() === false, "resumed after drain + tail delay");
+}
+
+// ---------------------------------------------------------------------------
+// Test: tail timer re-arms if audio is still scheduled when it fires
+// ---------------------------------------------------------------------------
+
+{
+	const clock = createMockClock();
+	let remaining = 1000;
+	const guard = new SpeakerEchoGuard({
+		tailDelayMs: 200,
+		clock,
+		remainingMs: () => remaining,
+	});
+
+	guard.onTtsEvent({ type: "tts.first_chunk" });
+	guard.onTtsEvent({ type: "tts.audio", payload: { final: true } });
+
+	// More audio got scheduled while waiting: still 500ms left at 1200ms.
+	remaining = 500;
+	clock.advance(1200);
+	assert(guard.isSuppressed() === true, "re-armed while audio remains");
+
+	// Second timer fires at 1200 + 500 + 200 = 1900ms with drain complete.
+	remaining = 0;
+	clock.advance(700);
+	assert(guard.isSuppressed() === false, "resumed after re-armed drain");
+}
+
+// ---------------------------------------------------------------------------
+// Test: attachPlayer() uses the player's remainingMs()
+// ---------------------------------------------------------------------------
+
+{
+	const clock = createMockClock();
+	const guard = new SpeakerEchoGuard({ tailDelayMs: 100, clock });
+	const fakePlayer = { remaining: 400, remainingMs() { return this.remaining; } };
+	guard.attachPlayer(fakePlayer);
+
+	guard.onTtsEvent({ type: "tts.first_chunk" });
+	guard.onTtsEvent({ type: "tts.audio", payload: { final: true } });
+
+	clock.advance(200); // past plain tail, playback still live
+	assert(guard.isSuppressed() === true, "player drain delays resume");
+
+	fakePlayer.remaining = 0;
+	clock.advance(300); // timer fires at 400 + 100 = 500ms
+	assert(guard.isSuppressed() === false, "resumed after player drained");
+}
+
+// ---------------------------------------------------------------------------
+// Test: broken remainingMs callback never wedges the mic
+// ---------------------------------------------------------------------------
+
+{
+	const clock = createMockClock();
+	const guard = new SpeakerEchoGuard({
+		tailDelayMs: 100,
+		clock,
+		remainingMs: () => {
+			throw new Error("boom");
+		},
+	});
+
+	guard.onTtsEvent({ type: "tts.first_chunk" });
+	guard.onTtsEvent({ type: "tts.audio", payload: { final: true } });
+	clock.advance(150);
+	assert(
+		guard.isSuppressed() === false,
+		"throwing drain estimate degrades to plain tail delay",
+	);
+}
+
+// ---------------------------------------------------------------------------
 // Summary
 // ---------------------------------------------------------------------------
 
