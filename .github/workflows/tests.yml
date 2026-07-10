@@ -50,3 +50,6 @@ jobs:
 
       - name: Test speaker echo guard
         run: node tests/js/test_speaker_echo_guard.mjs
+
+      - name: Test TTS audio player
+        run: node tests/js/test_tts_audio_player.mjs

@@ -120,7 +120,7 @@
 		close: function () {
 			this.stop();
 			if (this._player) {
-				this._player.clear();
+				this._player.close();
 			}
 			if (this._guard) {
 				this._guard.release();
@@ -199,6 +199,11 @@
 
 			if (this._mic) {
 				this._guard.attachMicSender(this._mic);
+			}
+			if (this._player && typeof this._guard.attachPlayer === "function") {
+				// Base the guard's resume on real playback drain rather than
+				// event arrival (scheduled audio outlives the final event).
+				this._guard.attachPlayer(this._player);
 			}
 		},
 

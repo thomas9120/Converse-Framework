@@ -4,7 +4,9 @@ Packages like ``nvidia-cublas-cu12`` install DLLs under
 ``site-packages/nvidia/<package>/bin/``, but CTranslate2 and other C
 extension libraries may not search those directories automatically.
 This module discovers them and adds them to the DLL search path via
-``os.add_dll_directory()`` (Python 3.8+, Windows-only).
+``os.add_dll_directory()`` and by prepending them to ``PATH`` (needed for
+libraries that resolve DLLs with a plain ``LoadLibrary`` at runtime, such
+as CTranslate2).  Windows-only.
 
 Usage::
 
@@ -114,6 +116,13 @@ def add_nvidia_dll_directories() -> list[object]:
     lifetime of the handle object.  Callers should keep the returned list
     alive until shutdown.
 
+    The discovered directories are also prepended to ``os.environ["PATH"]``:
+    ``os.add_dll_directory()`` only affects DLLs loaded through Python's
+    import machinery, but native libraries such as CTranslate2 resolve CUDA
+    DLLs (e.g. ``cublas64_12.dll``) at inference time with a plain
+    ``LoadLibrary`` call that searches only the application directory and
+    ``PATH``.
+
     Returns:
         List of handles from ``os.add_dll_directory()`` (one per discovered
         directory).  Empty if no directories are found or not on Windows.
@@ -131,7 +140,25 @@ def add_nvidia_dll_directories() -> list[object]:
             logger.info("Added DLL directory: %s", d)
         except (OSError, RuntimeError) as exc:
             logger.warning("Failed to add DLL directory %s: %s", d, exc)
+    _prepend_to_path(dirs)
     return handles
+
+
+def _prepend_to_path(dirs: list[Path]) -> None:
+    """Prepend ``dirs`` to ``os.environ["PATH"]``, skipping entries already
+    present (case-insensitive, as Windows paths are)."""
+    if not dirs:
+        return
+    current = os.environ.get("PATH", "")
+    existing = {entry.lower() for entry in current.split(os.pathsep) if entry}
+    new_entries = [str(d) for d in dirs if str(d).lower() not in existing]
+    if not new_entries:
+        return
+    os.environ["PATH"] = os.pathsep.join(
+        new_entries + ([current] if current else [])
+    )
+    for entry in new_entries:
+        logger.info("Prepended to PATH: %s", entry)
 
 
 def format_nvidia_dll_diagnostic() -> str:

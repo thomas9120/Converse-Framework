@@ -37,8 +37,10 @@
  *   ws.addEventListener('message', (ev) => {
  *     const event = JSON.parse(ev.data);
  *     if (event.type === 'tts.audio') player.onEvent(event);
+ *     if (event.type === 'tts.cancelled') player.cancel(); // barge-in
  *   });
- *   // when the conversation ends:
+ *   player.remainingMs();  // scheduled audio still to play
+ *   // when the conversation ends (also silences scheduled audio):
  *   player.close();
  *
  * The class is exported as `window.TtsAudioPlayer` in the browser and
@@ -83,6 +85,7 @@
       this._flushTimer = null;
       this._closed = false;
       this._nextStartTime = 0;
+      this._sources = [];
     }
 
     /**
@@ -95,7 +98,14 @@
      */
     onEvent(event) {
       if (this._closed) return;
-      if (!event || event.type !== 'tts.audio') return;
+      if (!event) return;
+      if (event.type === 'tts.cancelled') {
+        // Barge-in: the server abandoned this synthesis, so audio that
+        // is already scheduled must be silenced, not played out.
+        this.cancel();
+        return;
+      }
+      if (event.type !== 'tts.audio') return;
       const payload = event.payload || {};
       if (payload.encoding && payload.encoding !== 'pcm_s16le') {
         // The framework only ships pcm_s16le today. Any other encoding
@@ -125,15 +135,60 @@
       this._flush();
     }
 
-    /** Stop accepting events and release the coalescing timer. */
-    close() {
-      this._closed = true;
+    /**
+     * Stop all playback immediately: silences audio that is already
+     * scheduled on the AudioContext, discards any pending coalesced
+     * chunks, and resets the schedule clock. The player keeps accepting
+     * new `tts.audio` events afterwards, so this is the right call for
+     * barge-in and for handling `tts.cancelled`.
+     */
+    cancel() {
       if (this._flushTimer) {
         clearTimeout(this._flushTimer);
         this._flushTimer = null;
       }
       this._buffer = [];
       this._bufferBytes = 0;
+      const sources = this._sources;
+      this._sources = [];
+      for (let i = 0; i < sources.length; i++) {
+        try {
+          sources[i].onended = null;
+          sources[i].stop();
+        } catch (_) {
+          // Already stopped / never started — nothing to silence.
+        }
+      }
+      this._nextStartTime = 0;
+    }
+
+    /** Alias for {@link cancel}. */
+    clear() {
+      this.cancel();
+    }
+
+    /**
+     * Milliseconds of scheduled audio still to play, based on the
+     * AudioContext clock. Returns 0 when nothing is scheduled. Lets
+     * consumers (e.g. SpeakerEchoGuard) wait for real playback drain
+     * instead of the last `tts.audio` event, which can arrive seconds
+     * before the speaker goes quiet.
+     *
+     * @returns {number}
+     */
+    remainingMs() {
+      if (!this._ctx || !this._nextStartTime) return 0;
+      const remaining = (this._nextStartTime - this._ctx.currentTime) * 1000;
+      return remaining > 0 ? remaining : 0;
+    }
+
+    /**
+     * Stop playback and stop accepting events. Releases the coalescing
+     * timer and silences any audio still scheduled on the AudioContext.
+     */
+    close() {
+      this.cancel();
+      this._closed = true;
     }
 
     _ensureContext(sampleRate, channels) {
@@ -204,6 +259,11 @@
       source.connect(ctx.destination);
       const now = ctx.currentTime;
       const startAt = Math.max(now, this._nextStartTime);
+      this._sources.push(source);
+      source.onended = () => {
+        const idx = this._sources.indexOf(source);
+        if (idx !== -1) this._sources.splice(idx, 1);
+      };
       source.start(startAt);
       this._nextStartTime = startAt + audioBuffer.duration;
     }
